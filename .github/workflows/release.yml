@@ -16,7 +16,7 @@ on:
         required: true
         type: choice
         default: all
-        options: [windows, macos, all]
+        options: [windows, macos, linux, all]
       signing:
         description: 'Sign packages; unsigned all-platform builds publish a preview'
         required: true
@@ -65,7 +65,7 @@ jobs:
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
   linux:
-    if: ${{ inputs.platform == 'all' }}
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux' }}
     needs: validate
     uses: ./.github/workflows/build-cli-linux.yml
     with:
