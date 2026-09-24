@@ -147,8 +147,8 @@ jobs:
         shell: pwsh
         run: |
           foreach ($file in @(
-            'ui/desktop/out/Shhield-win32-x64/Shhield.exe',
-            'ui/desktop/out/Shhield-win32-x64/resources/bin/shhield.exe'
+            'ui/desktop/out/Shhield AI-win32-x64/Shhield.exe',
+            'ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe'
           )) {
             $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($file))
             try {
@@ -180,8 +180,8 @@ jobs:
           trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           files: |
-            ${{ github.workspace }}/ui/desktop/out/Shhield-win32-x64/Shhield.exe
-            ${{ github.workspace }}/ui/desktop/out/Shhield-win32-x64/resources/bin/shhield.exe
+            ${{ github.workspace }}/ui/desktop/out/Shhield AI-win32-x64/Shhield.exe
+            ${{ github.workspace }}/ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe
 
       - name: Prepare WiX MSI
         id: prepare-msi
@@ -191,7 +191,7 @@ jobs:
         run: |
           $arguments = @(
             'scripts/windows-distribution.mjs', 'prepare-msi',
-            '--app-dir', "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield-win32-x64",
+            '--app-dir', "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield AI-win32-x64",
             '--output-dir', "$env:GITHUB_WORKSPACE/windows-artifacts",
             '--version', '${{ steps.version.outputs.value }}',
             '--variant', 'standard'
@@ -241,8 +241,8 @@ jobs:
         run: |
           $manifest = Get-Content '${{ steps.prepare-msi.outputs.manifest }}' | ConvertFrom-Json
           $files = @(
-            'ui/desktop/out/Shhield-win32-x64/Shhield.exe',
-            'ui/desktop/out/Shhield-win32-x64/resources/bin/shhield.exe',
+            'ui/desktop/out/Shhield AI-win32-x64/Shhield.exe',
+            'ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe',
             '${{ steps.compile-msi.outputs.msi_file }}'
           ) + @($manifest.supportBinaries)
           foreach ($file in $files) {
@@ -255,7 +255,7 @@ jobs:
         run: |
           ./scripts/verify-windows-distribution.ps1 `
             -MsiPath '${{ steps.compile-msi.outputs.msi_file }}' `
-            -AppDirectory "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield-win32-x64" `
+            -AppDirectory "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield AI-win32-x64" `
             -Version '${{ steps.version.outputs.value }}'
 
       - name: Upload Windows build
