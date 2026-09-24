@@ -33,9 +33,9 @@ jobs:
       contents: read
       id-token: write
     env:
-      CARGO_HOME: ${{ runner.temp }}\cargo-home
+      CARGO_HOME: ${{ github.workspace }}\cargo-home
       CARGO_TARGET_DIR: ${{ github.workspace }}\target
-      PNPM_STORE_DIR: ${{ runner.temp }}\pnpm-store
+      PNPM_STORE_DIR: ${{ github.workspace }}\pnpm-store
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

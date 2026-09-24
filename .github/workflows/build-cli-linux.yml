@@ -186,8 +186,8 @@ jobs:
           cd "target/${TARGET}/release"
           tar -cjf "shhield-${TARGET}${VARIANT_SUFFIX}.tar.bz2" -C shhield-package .
           tar -czf "shhield-${TARGET}${VARIANT_SUFFIX}.tar.gz" -C shhield-package .
-          echo "ARTIFACT_BZ2=target/${TARGET}/release/shhield-${TARGET}${VARIANT_SUFFIX}.tar.bz2" >> $GITHUB_ENV
-          echo "ARTIFACT_GZ=target/${TARGET}/release/shhield-${TARGET}${VARIANT_SUFFIX}.tar.gz" >> $GITHUB_ENV
+          echo "ARTIFACT_BZ2=target/${TARGET}/release/shhield-${TARGET}${VARIANT_SUFFIX}.tar.bz2" >> "$GITHUB_ENV"
+          echo "ARTIFACT_GZ=target/${TARGET}/release/shhield-${TARGET}${VARIANT_SUFFIX}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
