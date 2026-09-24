@@ -4,21 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Source tag version without v (for example 1.0.0)'
+        description: 'Package version without v (for example 1.0.0)'
         required: true
         type: string
       source_sha:
-        description: 'Exact commit SHA for the source tag'
+        description: 'Exact source commit SHA; signed releases require a matching source tag'
         required: true
         type: string
       platform:
         description: 'Build scope; all is required to publish a release'
         required: true
         type: choice
-        default: windows
+        default: all
         options: [windows, macos, all]
       signing:
-        description: 'Sign packages; all signed platforms are required to publish'
+        description: 'Sign packages; unsigned all-platform builds publish a preview'
         required: true
         type: boolean
         default: false
@@ -36,7 +36,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
-      - name: Validate requested source tag
+      - name: Validate requested source commit
         env:
           VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -51,13 +51,17 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Match source tag to commit
+      - name: Verify source commit and signed tag
         id: source
         env:
           VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          SIGNING: ${{ inputs.signing }}
         run: |
-          test "$(git rev-parse "refs/tags/v${VERSION}^{commit}")" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [[ "$SIGNING" == true ]]; then
+            test "$(git rev-parse "refs/tags/v${VERSION}^{commit}")" = "$SOURCE_SHA"
+          fi
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
   linux:
@@ -78,7 +82,7 @@ jobs:
       version: ${{ inputs.version }}
       source_sha: ${{ needs.validate.outputs.source_sha }}
       target: aarch64-apple-darwin
-      package_cli: true
+      package_cli: false
       package_desktop: true
       signing: ${{ inputs.signing }}
       environment: ${{ inputs.signing && 'signing' || '' }}
@@ -92,7 +96,7 @@ jobs:
       version: ${{ inputs.version }}
       source_sha: ${{ needs.validate.outputs.source_sha }}
       target: x86_64-apple-darwin
-      package_cli: true
+      package_cli: false
       package_desktop: true
       signing: ${{ inputs.signing }}
       environment: ${{ inputs.signing && 'signing' || '' }}
@@ -109,7 +113,7 @@ jobs:
     secrets: inherit
 
   publish:
-    if: ${{ inputs.signing && inputs.platform == 'all' }}
+    if: ${{ inputs.platform == 'all' }}
     needs: [validate, linux, macos-arm64, macos-x64, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -131,27 +135,40 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          pattern: '!internal-*'
+          pattern: 'Shhield*'
           merge-multiple: true
       - name: Generate macOS update manifest
-        if: ${{ env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
+        if: ${{ inputs.signing && env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
         run: node ui/desktop/scripts/generate-mac-update-manifest.js --version "v${VERSION}" --directory .
       - name: Attest build provenance
+        if: ${{ inputs.signing }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: |
-            shhield-*.tar.bz2
-            shhield-*.tar.gz
-            shhield-*.zip
-            shhield-*.sha256
             Shhield*.zip
             Shhield*.msi
             Shhield*.sha256
             *.deb
             *.rpm
             *.flatpak
-            download_cli.sh
+      - name: Publish unsigned preview
+        if: ${{ !inputs.signing }}
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd  # v1.21.0
+        with:
+          tag: preview-v${{ inputs.version }}-${{ needs.validate.outputs.source_sha }}
+          name: Shhield AI v${{ inputs.version }} Preview (unsigned)
+          body: 'Unsigned preview built from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}. macOS Gatekeeper and Windows SmartScreen may block installation.'
+          prerelease: true
+          allowUpdates: true
+          artifacts: |
+            Shhield*.zip
+            Shhield*.msi
+            Shhield*.sha256
+            *.deb
+            *.rpm
+            *.flatpak
       - name: Publish versioned release
+        if: ${{ inputs.signing }}
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd  # v1.21.0
         with:
           tag: v${{ inputs.version }}
@@ -159,18 +176,14 @@ jobs:
           body: 'Built from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}'
           allowUpdates: true
           artifacts: |
-            shhield-*.tar.bz2
-            shhield-*.tar.gz
-            shhield-*.zip
-            shhield-*.sha256
             Shhield*.zip
             Shhield*.msi
             Shhield*.sha256
             *.deb
             *.rpm
             *.flatpak
-            download_cli.sh
       - name: Publish stable release
+        if: ${{ inputs.signing }}
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd  # v1.21.0
         with:
           tag: stable
@@ -178,19 +191,14 @@ jobs:
           body: 'Version v${{ inputs.version }} from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}'
           allowUpdates: true
           artifacts: |
-            shhield-*.tar.bz2
-            shhield-*.tar.gz
-            shhield-*.zip
-            shhield-*.sha256
             Shhield*.zip
             Shhield*.msi
             Shhield*.sha256
             *.deb
             *.rpm
             *.flatpak
-            download_cli.sh
       - name: Upload macOS update manifests
-        if: ${{ env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
+        if: ${{ inputs.signing && env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

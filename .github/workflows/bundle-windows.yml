@@ -61,7 +61,7 @@ jobs:
       - name: Verify hosted toolchain
         shell: pwsh
         run: |
-          foreach ($command in @('git', 'cargo', 'rustc', 'rustup', 'node', 'pnpm', '7z.exe')) {
+          foreach ($command in @('git', 'cargo', 'rustc', 'rustup', 'node', 'pnpm')) {
             if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
               throw "Required runner tool is missing: $command"
             }
@@ -118,7 +118,7 @@ jobs:
       - name: Prepare bundled rbt3 input
         shell: pwsh
         env:
-          SHHIELD_RBT3_BUILD_BASE_URL: ${{ secrets.SHHIELD_RBT3_BUILD_BASE_URL }}
+          SHHIELD_RBT3_BUILD_BASE_URL: ${{ vars.SHHIELD_RBT3_BUILD_BASE_URL }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:SHHIELD_RBT3_BUILD_BASE_URL)) {
             throw 'Set SHHIELD_RBT3_BUILD_BASE_URL to the controlled rbt3 object directory.'
@@ -228,30 +228,12 @@ jobs:
           certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           files: ${{ steps.compile-msi.outputs.msi_file }}
 
-      - name: Create Portable ZIP and checksums
-        id: package
+      - name: Checksum MSI
         shell: pwsh
-        env:
-          SIGNING: ${{ inputs.signing }}
         run: |
-          $version = '${{ steps.version.outputs.value }}'
-          $suffix = if ($env:SIGNING -eq 'true') { '' } else { '-unsigned' }
-          $artifactDir = "$env:GITHUB_WORKSPACE/windows-artifacts"
-          $portableDir = Join-Path $env:RUNNER_TEMP 'shhield-portable'
-          $zip = Join-Path $artifactDir "Shhield-AI-$version-windows-x64$suffix-portable.zip"
-          Set-Location ui/desktop
-          node scripts/windows-distribution.mjs stage-portable `
-            --app-dir "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield-win32-x64" `
-            --output-dir $portableDir
-          Push-Location $portableDir
-          7z a -tzip $zip .
-          Pop-Location
-
-          foreach ($file in @(Get-Item '${{ steps.compile-msi.outputs.msi_file }}', $zip)) {
-            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
-            "$hash  $($file.Name)" | Set-Content -Encoding ascii "$($file.FullName).sha256"
-          }
-          "portable_dir=$portableDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $file = Get-Item '${{ steps.compile-msi.outputs.msi_file }}'
+          $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+          "$hash  $($file.Name)" | Set-Content -Encoding ascii "$($file.FullName).sha256"
 
       - name: Verify signatures
         if: ${{ inputs.signing }}
@@ -268,18 +250,9 @@ jobs:
             if ($signature.Status -ne 'Valid') { throw "Signature invalid for ${file}: $($signature.Status)" }
           }
 
-      - name: Smoke MSI lifecycle and Portable layout
+      - name: Smoke MSI lifecycle
         shell: pwsh
         run: |
-          foreach ($file in @(
-            '${{ steps.package.outputs.portable_dir }}/portable.flag',
-            '${{ steps.package.outputs.portable_dir }}/resources/bin/shhield.exe'
-          )) {
-            if (-not (Test-Path $file -PathType Leaf)) { throw "Portable entry is missing: $file" }
-          }
-          if (Test-Path '${{ steps.package.outputs.portable_dir }}/cli') {
-            throw 'Portable package unexpectedly exposes a CLI directory'
-          }
           ./scripts/verify-windows-distribution.ps1 `
             -MsiPath '${{ steps.compile-msi.outputs.msi_file }}' `
             -AppDirectory "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield-win32-x64" `
@@ -292,7 +265,6 @@ jobs:
           name: Shhield-AI-${{ steps.version.outputs.value }}-windows-x64${{ !inputs.signing && '-unsigned' || '' }}
           path: |
             windows-artifacts/*.msi
-            windows-artifacts/*.zip
             windows-artifacts/*.sha256
           if-no-files-found: error
           overwrite: true

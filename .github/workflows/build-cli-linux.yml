@@ -35,28 +35,6 @@ jobs:
             # Pinned by digest for reproducible builds; bump explicitly when newer manylinux_2_28 images ship.
             container: quay.io/pypa/manylinux_2_28_x86_64@sha256:441c35fdc6ee809ff9260894f8468ab4fea8c15dc880f8700a3f81b7922c1cda
             variant: standard
-          - architecture: aarch64
-            target-suffix: unknown-linux-gnu
-            build-on: ubuntu-22.04-arm
-            # Pinned by digest for reproducible builds; bump explicitly when newer manylinux_2_28 images ship.
-            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:8b5f2b4e8c072ae5aefeb659f22c03e1ff46e6a82f154b6c904b106c87e65ff7
-            variant: standard
-          - architecture: x86_64
-            target-suffix: unknown-linux-musl
-            build-on: ubuntu-22.04
-            variant: musl
-          - architecture: aarch64
-            target-suffix: unknown-linux-musl
-            build-on: ubuntu-22.04-arm
-            variant: musl
-          - architecture: x86_64
-            target-suffix: unknown-linux-gnu
-            build-on: ubuntu-24.04
-            variant: vulkan
-          - architecture: aarch64
-            target-suffix: unknown-linux-gnu
-            build-on: ubuntu-24.04-arm
-            variant: vulkan
 
     steps:
       - name: Checkout code
@@ -166,6 +144,7 @@ jobs:
           cargo build --release --target "$TARGET" -p shhield-cli --bin shhield
 
       - name: Package CLI
+        if: ${{ !inputs.package_desktop }}
         run: |
           # Hermit isn't installed in the manylinux container; tar is all this step needs.
           if [ "${{ matrix.container }}" = '' ]; then
@@ -190,6 +169,7 @@ jobs:
           echo "ARTIFACT_GZ=target/${TARGET}/release/shhield-${TARGET}${VARIANT_SUFFIX}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload CLI artifact
+        if: ${{ !inputs.package_desktop }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           retention-days: 1
@@ -232,24 +212,6 @@ jobs:
             variant: standard
             variant_suffix: ''
             build_on: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            electron_arch: arm64
-            flatpak_arch: aarch64
-            variant: standard
-            variant_suffix: ''
-            build_on: ubuntu-22.04-arm
-          - target: x86_64-unknown-linux-gnu
-            electron_arch: x64
-            flatpak_arch: x86_64
-            variant: vulkan
-            variant_suffix: '-vulkan'
-            build_on: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
-            electron_arch: arm64
-            flatpak_arch: aarch64
-            variant: vulkan
-            variant_suffix: '-vulkan'
-            build_on: ubuntu-24.04-arm
 
     steps:
       - name: Checkout repository
@@ -366,10 +328,10 @@ jobs:
 
       - name: Prepare bundled rbt3 build input
         env:
-          SHHIELD_RBT3_BUILD_BASE_URL: ${{ secrets.SHHIELD_RBT3_BUILD_BASE_URL }}
+          SHHIELD_RBT3_BUILD_BASE_URL: ${{ vars.SHHIELD_RBT3_BUILD_BASE_URL }}
         run: |
           test -n "${SHHIELD_RBT3_BUILD_BASE_URL}" || {
-            echo "Set the repository secret SHHIELD_RBT3_BUILD_BASE_URL to the controlled rbt3 object directory."
+            echo "Set the repository variable SHHIELD_RBT3_BUILD_BASE_URL to the controlled rbt3 object directory."
             exit 1
           }
           model_dir="${RUNNER_TEMP}/shhield-rbt3"
