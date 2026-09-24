@@ -5,7 +5,7 @@ This public repository builds and publishes Shhield AI packages from the private
 ## Configuration
 
 - `SOURCE_DEPLOY_KEY` is configured as a **read-only** deploy key for `gavin-k/shhield-ai`. Keep it read-only and rotate it if the GitHub CLI authorization that created it is revoked.
-- The `SHHIELD_RBT3_BUILD_BASE_URL` Actions variable points to the verified [rbt3 Hugging Face revision](https://huggingface.co/lijy0717/shhield-rbt3-chinese-base/tree/4deb16d5c5fc74e046e9257cb2bf86ccd50cb8d4). Hosted runners download `config.json`, `tokenizer.json`, and `model.safetensors`; source staging verifies their sizes and SHA-256 hashes.
+- rbt3 downloads on demand from the pinned [Hugging Face revision](https://huggingface.co/lijy0717/shhield-rbt3-chinese-base/tree/4deb16d5c5fc74e046e9257cb2bf86ccd50cb8d4). The source manifest verifies file sizes and SHA-256 hashes; installers do not bundle its weights.
 - The `signing` Environment requires a reviewer and a protected release-repository branch. Add the Apple and Azure signing secrets used by `bundle-macos.yml` and `bundle-windows.yml` to that environment.
 - Update the Azure federated credential to accept this repository's OIDC subject for the `signing` environment. The subject changes from the private source repository.
 - Set `ENABLE_MAC_NATIVE_AUTO_UPDATE=true` only after the manifest consumer and asset URLs point to this release repository. The initial release can leave it unset.

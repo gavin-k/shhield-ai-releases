@@ -230,23 +230,6 @@ jobs:
         run: source ../../bin/activate-hermit && pnpm install --frozen-lockfile
         working-directory: ui/desktop
 
-      - name: Prepare bundled rbt3 build input
-        env:
-          SHHIELD_RBT3_BUILD_BASE_URL: ${{ vars.SHHIELD_RBT3_BUILD_BASE_URL }}
-        run: |
-          test -n "${SHHIELD_RBT3_BUILD_BASE_URL}" || {
-            echo "Set the repository variable SHHIELD_RBT3_BUILD_BASE_URL to the controlled rbt3 object directory."
-            exit 1
-          }
-          model_dir="${RUNNER_TEMP}/shhield-rbt3"
-          mkdir -p "${model_dir}"
-          for file in config.json tokenizer.json model.safetensors; do
-            curl --fail --location --retry 3 \
-              "${SHHIELD_RBT3_BUILD_BASE_URL%/}/${file}" \
-              --output "${model_dir}/${file}"
-          done
-          echo "SHHIELD_RBT3_MODEL_DIR=${model_dir}" >> "${GITHUB_ENV}"
-
       - name: Configure for Intel build
         if: ${{ inputs.target == 'x86_64-apple-darwin' }}
         run: jq '.build.mac.target[0].arch = "x64"' package.json > package.json.tmp && mv package.json.tmp package.json
