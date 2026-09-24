@@ -302,23 +302,23 @@ jobs:
         with:
           retention-days: 1
           name: ${{ inputs.target == 'x86_64-apple-darwin' && 'Shhield-darwin-x64' || 'Shhield-darwin-arm64' }}
-          path: ${{ inputs.target == 'x86_64-apple-darwin' && 'ui/desktop/out/Shhield-darwin-x64/Shhield_intel_mac.zip' || 'ui/desktop/out/Shhield-darwin-arm64/Shhield.zip' }}
+          path: ${{ inputs.target == 'x86_64-apple-darwin' && 'ui/desktop/out/Shhield AI-darwin-x64/Shhield_intel_mac.zip' || 'ui/desktop/out/Shhield AI-darwin-arm64/Shhield.zip' }}
           if-no-files-found: error
           overwrite: true
 
       - name: Quick launch test (macOS)
         env:
-          APP_PATH: ${{ inputs.target == 'x86_64-apple-darwin' && 'ui/desktop/out/Shhield-darwin-x64/Shhield.app' || 'ui/desktop/out/Shhield-darwin-arm64/Shhield.app' }}
+          APP_PATH: ${{ inputs.target == 'x86_64-apple-darwin' && 'ui/desktop/out/Shhield AI-darwin-x64/Shhield AI.app' || 'ui/desktop/out/Shhield AI-darwin-arm64/Shhield AI.app' }}
         run: |
           xattr -cr "$APP_PATH"
-          echo "Opening Shhield.app..."
+          echo "Opening Shhield AI.app..."
           open -g "$APP_PATH"
           sleep 5
 
-          if pgrep -f "Shhield.app/Contents/MacOS/Shhield" > /dev/null; then
+          if pgrep -f "Shhield AI.app/Contents/MacOS/Shhield AI" > /dev/null; then
             echo "App appears to be running."
           else
             echo "App did not stay open. Possible crash or startup error."
             exit 1
           fi
-          pkill -f "Shhield.app/Contents/MacOS/Shhield"
+          pkill -f "Shhield AI.app/Contents/MacOS/Shhield AI"
