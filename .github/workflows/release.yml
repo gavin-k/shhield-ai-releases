@@ -103,6 +103,9 @@ jobs:
     secrets: inherit
 
   windows:
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
     needs: validate
     uses: ./.github/workflows/bundle-windows.yml
