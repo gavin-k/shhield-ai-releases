@@ -15,3 +15,5 @@ Run `Release` manually with a package version and exact source commit SHA. `plat
 The source repository's existing release workflow remains the active fallback until the hosted Windows MSI smoke, macOS signing/notarization, artifact hashes and architecture, and Desktop activation are checked from a run here. After that run, disable its duplicate release trigger and point download/update URLs to this repository.
 
 The model URL is configured, but Apple/Azure signing secrets are not. No signed product build has run in this repository yet. The source repository is private on a plan where GitHub rejected branch/ruleset protection, so a release reviewer must verify its tag and commit before signing. GitHub-hosted Windows has a 14 GB SSD and a six-hour job limit; the first real build must check disk use and completion time.
+
+Windows currently builds without `code-mode` because the combined V8 and llama.cpp native libraries produce duplicate C++ exception symbols on MSVC. Keep this limitation in preview release notes until an upstream fix is verified.

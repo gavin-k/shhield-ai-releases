@@ -160,7 +160,7 @@ jobs:
         with:
           tag: preview-v${{ inputs.version }}-${{ needs.validate.outputs.source_sha }}
           name: Shhield AI v${{ inputs.version }} Preview (unsigned)
-          body: 'Unsigned preview built from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}. macOS Gatekeeper and Windows SmartScreen may block installation.'
+          body: 'Unsigned preview built from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}. Windows code-mode is temporarily unavailable due to an upstream V8 and llama.cpp linker conflict. macOS Gatekeeper and Windows SmartScreen may block installation.'
           prerelease: true
           allowUpdates: true
           artifacts: |

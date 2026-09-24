@@ -107,7 +107,7 @@ jobs:
         run: |
           cargo build --release -p shhield-cli --bin shhield `
             --no-default-features `
-            --features code-mode,local-inference,rustls-tls,system-keyring
+            --features local-inference,rustls-tls,system-keyring
           if ($LASTEXITCODE -ne 0) { throw 'Rust backend build failed' }
 
           $binDir = 'ui/desktop/src/bin'
