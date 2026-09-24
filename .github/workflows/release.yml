@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Source tag version without v (for example 1.0.0)'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact commit SHA for the source tag'
+        required: true
+        type: string
+      platform:
+        description: 'Build scope; all is required to publish a release'
+        required: true
+        type: choice
+        default: windows
+        options: [windows, macos, all]
+      signing:
+        description: 'Sign packages; all signed platforms are required to publish'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Validate requested source tag
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Match source tag to commit
+        id: source
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(git rev-parse "refs/tags/v${VERSION}^{commit}")" = "$SOURCE_SHA"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+  linux:
+    if: ${{ inputs.platform == 'all' }}
+    needs: validate
+    uses: ./.github/workflows/build-cli-linux.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      package_desktop: true
+    secrets: inherit
+
+  macos-arm64:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
+    needs: validate
+    uses: ./.github/workflows/bundle-macos.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      target: aarch64-apple-darwin
+      package_cli: true
+      package_desktop: true
+      signing: ${{ inputs.signing }}
+      environment: ${{ inputs.signing && 'signing' || '' }}
+    secrets: inherit
+
+  macos-x64:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
+    needs: validate
+    uses: ./.github/workflows/bundle-macos.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      target: x86_64-apple-darwin
+      package_cli: true
+      package_desktop: true
+      signing: ${{ inputs.signing }}
+      environment: ${{ inputs.signing && 'signing' || '' }}
+    secrets: inherit
+
+  windows:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
+    needs: validate
+    uses: ./.github/workflows/bundle-windows.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      signing: ${{ inputs.signing }}
+    secrets: inherit
+
+  publish:
+    if: ${{ inputs.signing && inputs.platform == 'all' }}
+    needs: [validate, linux, macos-arm64, macos-x64, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+      ENABLE_MAC_NATIVE_AUTO_UPDATE: ${{ vars.ENABLE_MAC_NATIVE_AUTO_UPDATE || 'false' }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: '!internal-*'
+          merge-multiple: true
+      - name: Generate macOS update manifest
+        if: ${{ env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
+        run: node ui/desktop/scripts/generate-mac-update-manifest.js --version "v${VERSION}" --directory .
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: |
+            shhield-*.tar.bz2
+            shhield-*.tar.gz
+            shhield-*.zip
+            shhield-*.sha256
+            Shhield*.zip
+            Shhield*.msi
+            Shhield*.sha256
+            *.deb
+            *.rpm
+            *.flatpak
+            download_cli.sh
+      - name: Publish versioned release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd  # v1.21.0
+        with:
+          tag: v${{ inputs.version }}
+          name: Shhield AI v${{ inputs.version }}
+          body: 'Built from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}'
+          allowUpdates: true
+          artifacts: |
+            shhield-*.tar.bz2
+            shhield-*.tar.gz
+            shhield-*.zip
+            shhield-*.sha256
+            Shhield*.zip
+            Shhield*.msi
+            Shhield*.sha256
+            *.deb
+            *.rpm
+            *.flatpak
+            download_cli.sh
+      - name: Publish stable release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd  # v1.21.0
+        with:
+          tag: stable
+          name: Stable
+          body: 'Version v${{ inputs.version }} from gavin-k/shhield-ai@${{ needs.validate.outputs.source_sha }}'
+          allowUpdates: true
+          artifacts: |
+            shhield-*.tar.bz2
+            shhield-*.tar.gz
+            shhield-*.zip
+            shhield-*.sha256
+            Shhield*.zip
+            Shhield*.msi
+            Shhield*.sha256
+            *.deb
+            *.rpm
+            *.flatpak
+            download_cli.sh
+      - name: Upload macOS update manifests
+        if: ${{ env.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${VERSION}" latest-mac.yml --clobber
+          gh release upload stable latest-mac.yml --clobber
