@@ -1,0 +1,72 @@
+name: Diagnose MSI
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 24.10.0
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061  # v4.2.0
+        with:
+          version: 10.34.5
+      - name: Prepare tiny MSI
+        shell: pwsh
+        run: |
+          $wix = (Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset v3.*\bin\candle.exe" |
+            Select-Object -First 1).DirectoryName
+          if (-not $wix) { throw 'WiX Toolset v3 was not found' }
+          $env:PATH = "$wix;$env:PATH"
+          Set-Location ui/desktop
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm install failed' }
+          $app = Join-Path $env:RUNNER_TEMP 'dummy-app'
+          $output = Join-Path $env:RUNNER_TEMP 'dummy-msi'
+          New-Item -ItemType Directory -Force -Path $app, $output | Out-Null
+          Copy-Item "$env:WINDIR\System32\notepad.exe" (Join-Path $app 'Shhield.exe')
+          node scripts/windows-distribution.mjs prepare-msi --app-dir $app --output-dir $output --version 0.0.0 --unsigned true
+          if ($LASTEXITCODE -ne 0) { throw 'MSI preparation failed' }
+          node scripts/windows-distribution.mjs compile-msi --manifest (Join-Path $output 'msi-manifest.json')
+          if ($LASTEXITCODE -ne 0) { throw 'MSI compilation failed' }
+          "msi=$output\Shhield-AI-0.0.0-windows-x64-unsigned.msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Diagnose silent install
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'dummy-msi-install.log'
+          $dir = Join-Path $env:RUNNER_TEMP 'dummy-install'
+          $arguments = "/i `"$env:msi`" /qn /norestart /l*v `"$log`" APPLICATIONROOTDIRECTORY=`"$dir`""
+          $process = Start-Process msiexec.exe -ArgumentList $arguments -PassThru
+          $finished = $process.WaitForExit(180000)
+          $actions = @()
+          if (Test-Path $log) {
+            $actions = @(Get-Content $log -Tail 300 | ForEach-Object {
+              if ($_ -match 'Action (?:start|ended) [^:]*: ([A-Za-z0-9_]+)') { $matches[1] }
+            } | Select-Object -Last 8)
+          }
+          $requested = Test-Path (Join-Path $dir 'Shhield.exe')
+          $default = Test-Path (Join-Path $env:ProgramFiles 'Shhield AI\Shhield.exe')
+          Write-Host "clientFinished=$finished requestedExe=$requested defaultExe=$default recentActions=$($actions -join ',')"
+          if (-not $finished) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'msiexec client exceeded three minutes'
+          }
+          Write-Host "msiexecExitCode=$($process.ExitCode)"
+          if ($process.ExitCode -notin @(0, 3010)) { throw 'MSI installation failed' }
