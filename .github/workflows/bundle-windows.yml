@@ -216,7 +216,7 @@ jobs:
         run: |
           $file = Get-Item '${{ steps.compile-msi.outputs.msi_file }}'
           $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
-          "$hash  $($file.Name)" | Set-Content -Encoding ascii "$($file.FullName).sha256"
+          [IO.File]::WriteAllText("$($file.FullName).sha256", "$hash  $($file.Name)`n", [Text.Encoding]::ASCII)
 
       - name: Verify signatures
         if: ${{ inputs.signing }}
