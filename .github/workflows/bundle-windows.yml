@@ -234,6 +234,7 @@ jobs:
           }
 
       - name: Smoke MSI lifecycle
+        timeout-minutes: 15
         shell: pwsh
         run: |
           ./scripts/verify-windows-distribution.ps1 `
