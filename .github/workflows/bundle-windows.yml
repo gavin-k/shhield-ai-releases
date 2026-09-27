@@ -76,8 +76,10 @@ jobs:
               Select-Object -First 1).FullName
           }
           if (-not $candlePath) { throw 'WiX Toolset v3 was not found' }
-          if (-not (Test-Path (Join-Path (Split-Path $candlePath) 'light.exe'))) {
-            throw 'WiX light.exe was not found next to candle.exe'
+          foreach ($tool in @('light.exe', 'torch.exe')) {
+            if (-not (Test-Path (Join-Path (Split-Path $candlePath) $tool))) {
+              throw "WiX $tool was not found next to candle.exe"
+            }
           }
           (Split-Path $candlePath) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path $env:CARGO_HOME, $env:CARGO_TARGET_DIR, $env:PNPM_STORE_DIR | Out-Null
