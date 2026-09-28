@@ -1,0 +1,72 @@
+name: Validate macOS staging
+run-name: Validate macOS staging v${{ inputs.version }} from ${{ inputs.source_sha }}
+
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version without v (validation only; no release)'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact reviewed commit SHA in the source repository'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-macos-${{ inputs.source_sha }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate build identity
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          ruby scripts/validate-macos-workflow.test.rb
+          node --input-type=module <<'NODE'
+          import { validateIdentity } from './scripts/release-candidate.mjs';
+          validateIdentity({ version: process.env.VERSION, channel: 'staging',
+            source_sha: process.env.SOURCE_SHA, workflow_sha: process.env.GITHUB_SHA,
+            run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT });
+          NODE
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned source belongs to main
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+
+  macos:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    uses: ./.github/workflows/bundle-macos.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ inputs.source_sha }}
+      target: ${{ matrix.target }}
+      channel: staging
+      signing: true
+      package_desktop: true
+      environment: signing
+    secrets: inherit
