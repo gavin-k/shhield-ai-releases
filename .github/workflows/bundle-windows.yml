@@ -2,7 +2,18 @@ name: "Bundle Desktop (Windows)"
 
 on:
   workflow_call:
+    outputs:
+      backend_artifact_id:
+        value: ${{ inputs.backend_artifact_id || jobs.package-windows.outputs.backend_artifact_id }}
+      package_artifact_id:
+        value: ${{ jobs.package-windows.outputs.package_artifact_id }}
     inputs:
+      channel:
+        required: true
+        type: string
+      backend_artifact_id:
+        default: ''
+        type: string
       version:
         description: 'Version to build'
         required: false
@@ -32,11 +43,23 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      backend_artifact_id: ${{ steps.backend.outputs.artifact-id }}
+      package_artifact_id: ${{ steps.package.outputs.artifact-id }}
     env:
+      SHHIELD_LICENSE_CHANNEL: ${{ inputs.channel }}
+      APP_DIR: ${{ github.workspace }}/ui/desktop/${{ inputs.channel == 'staging' && 'out-staging/Shhield AI Staging-win32-x64' || 'out/Shhield AI-win32-x64' }}
       CARGO_HOME: ${{ github.workspace }}\cargo-home
       CARGO_TARGET_DIR: ${{ github.workspace }}\target
       PNPM_STORE_DIR: ${{ github.workspace }}\pnpm-store
     steps:
+      - name: Validate signed channel
+        shell: pwsh
+        env:
+          SIGNING: ${{ inputs.signing }}
+        run: |
+          if ($env:SIGNING -ne 'true') { throw 'Release candidates must be signed' }
+          if ($env:SHHIELD_LICENSE_CHANNEL -notin @('staging', 'production')) { throw 'Invalid channel' }
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -105,6 +128,7 @@ jobs:
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Build privacy-profile backend
+        if: inputs.backend_artifact_id == ''
         shell: pwsh
         run: |
           cargo build --release -p shhield-cli --bin shhield `
@@ -117,6 +141,22 @@ jobs:
           New-Item -ItemType Directory -Force -Path $binDir | Out-Null
           Copy-Item "$env:CARGO_TARGET_DIR/release/shhield.exe" "$binDir/shhield.exe" -Force
 
+      - name: Preserve unsigned backend for the production package
+        if: inputs.backend_artifact_id == ''
+        id: backend
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: internal-shhield-windows-${{ github.run_attempt }}
+          path: target/release/shhield.exe
+          retention-days: 30
+          if-no-files-found: error
+      - name: Reuse the tested source backend
+        if: inputs.backend_artifact_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ inputs.backend_artifact_id }}
+          path: ui/desktop/src/bin
+
       - name: Package Electron application
         shell: pwsh
         env:
@@ -125,15 +165,15 @@ jobs:
           Set-Location ui/desktop
           pnpm install --frozen-lockfile --store-dir "$env:PNPM_STORE_DIR"
           node scripts/prepare-platform-binaries.js
-          pnpm run i18n:compile
-          pnpm exec electron-forge package --platform=win32 --arch=x64
+          pnpm run package --platform=win32 --arch=x64
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed' }
 
       - name: Verify packaged PE architecture
         shell: pwsh
         run: |
           foreach ($file in @(
-            'ui/desktop/out/Shhield AI-win32-x64/Shhield.exe',
-            'ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe'
+            "$env:APP_DIR/Shhield.exe",
+            "$env:APP_DIR/resources/bin/shhield.exe"
           )) {
             $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($file))
             try {
@@ -165,8 +205,8 @@ jobs:
           trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
           files: |
-            ${{ github.workspace }}/ui/desktop/out/Shhield AI-win32-x64/Shhield.exe
-            ${{ github.workspace }}/ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe
+            ${{ env.APP_DIR }}/Shhield.exe
+            ${{ env.APP_DIR }}/resources/bin/shhield.exe
 
       - name: Prepare WiX MSI
         id: prepare-msi
@@ -176,7 +216,7 @@ jobs:
         run: |
           $arguments = @(
             'scripts/windows-distribution.mjs', 'prepare-msi',
-            '--app-dir', "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield AI-win32-x64",
+            '--app-dir', "$env:APP_DIR",
             '--output-dir', "$env:GITHUB_WORKSPACE/windows-artifacts",
             '--version', '${{ steps.version.outputs.value }}',
             '--variant', 'standard'
@@ -226,8 +266,8 @@ jobs:
         run: |
           $manifest = Get-Content '${{ steps.prepare-msi.outputs.manifest }}' | ConvertFrom-Json
           $files = @(
-            'ui/desktop/out/Shhield AI-win32-x64/Shhield.exe',
-            'ui/desktop/out/Shhield AI-win32-x64/resources/bin/shhield.exe',
+            "$env:APP_DIR/Shhield.exe",
+            "$env:APP_DIR/resources/bin/shhield.exe",
             '${{ steps.compile-msi.outputs.msi_file }}'
           ) + @($manifest.supportBinaries)
           foreach ($file in $files) {
@@ -235,22 +275,51 @@ jobs:
             if ($signature.Status -ne 'Valid') { throw "Signature invalid for ${file}: $($signature.Status)" }
           }
 
+      - name: Resolve previous production MSI
+        if: inputs.channel == 'production'
+        id: baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          try {
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/gavin-k/shhield-ai-releases/releases/latest' -Headers @{
+              Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'
+            }
+          } catch {
+            if ($_.Exception.Response.StatusCode -eq 404) {
+              'No prior production release: use synthetic installer baseline' | Write-Host
+              exit 0
+            }
+            throw
+          }
+          $asset = @($release.assets | Where-Object { $_.name -match '^Shhield-AI-[0-9]+\.[0-9]+\.[0-9]+-windows-x64\.msi$' })
+          if ($asset.Count -ne 1) { throw 'Previous release must contain exactly one Windows MSI' }
+          $baselineDir = Join-Path $env:RUNNER_TEMP 'previous-release'
+          gh release download $release.tag_name --repo gavin-k/shhield-ai-releases --pattern $asset[0].name --dir $baselineDir
+          if ($LASTEXITCODE -ne 0) { throw 'Previous MSI download failed' }
+          $baselinePath = Join-Path $baselineDir $asset[0].name
+          if ((Get-AuthenticodeSignature $baselinePath).Status -ne 'Valid') { throw 'Previous MSI signature invalid' }
+          "path=$baselinePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Smoke MSI lifecycle
         timeout-minutes: 15
         shell: pwsh
         run: |
           ./scripts/verify-windows-distribution.ps1 `
             -MsiPath '${{ steps.compile-msi.outputs.msi_file }}' `
-            -AppDirectory "$env:GITHUB_WORKSPACE/ui/desktop/out/Shhield AI-win32-x64" `
-            -Version '${{ steps.version.outputs.value }}'
+            -AppDirectory "$env:APP_DIR" `
+            -Version '${{ steps.version.outputs.value }}' `
+            -Channel '${{ inputs.channel }}' `
+            -BaselineMsiPath '${{ steps.baseline.outputs.path }}'
 
       - name: Upload Windows build
+        id: package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          retention-days: 1
-          name: Shhield-AI-${{ steps.version.outputs.value }}-windows-x64${{ !inputs.signing && '-unsigned' || '' }}
+          retention-days: 30
+          name: Shhield-${{ inputs.channel }}-windows-x64-${{ github.run_attempt }}
           path: |
             windows-artifacts/*.msi
             windows-artifacts/*.sha256
           if-no-files-found: error
-          overwrite: true

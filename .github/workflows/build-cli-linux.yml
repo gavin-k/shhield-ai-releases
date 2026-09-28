@@ -1,5 +1,8 @@
 on:
   workflow_call:
+    outputs:
+      package_artifact_ids:
+        value: ${{ jobs.package-desktop-linux.outputs.artifact_ids }}
     inputs:
       version:
         required: false
@@ -36,6 +39,8 @@ jobs:
             container: quay.io/pypa/manylinux_2_28_x86_64@sha256:441c35fdc6ee809ff9260894f8468ab4fea8c15dc880f8700a3f81b7922c1cda
             variant: standard
 
+    outputs:
+      backend_artifact_id: ${{ steps.backend.outputs.artifact-id }}
     steps:
       - name: Install SSH for private source checkout
         if: matrix.container != ''
@@ -194,19 +199,22 @@ jobs:
           cp "target/${TARGET}/release/shhield" "artifacts/internal-shhield-${TARGET}${VARIANT_SUFFIX}"
 
       - name: Upload internal Shhield binary
+        id: backend
         if: ${{ inputs.package_desktop && matrix.target-suffix == 'unknown-linux-gnu' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          retention-days: 1
-          name: internal-shhield-${{ matrix.architecture }}-${{ matrix.target-suffix }}${{ matrix.variant == 'vulkan' && '-vulkan' || '' }}
+          retention-days: 30
+          name: internal-shhield-${{ matrix.architecture }}-${{ matrix.target-suffix }}${{ matrix.variant == 'vulkan' && '-vulkan' || '' }}-${{ github.run_attempt }}
           path: artifacts/internal-shhield-${{ matrix.architecture }}-${{ matrix.target-suffix }}${{ matrix.variant == 'vulkan' && '-vulkan' || '' }}
           if-no-files-found: error
-          overwrite: true
 
   package-desktop-linux:
     name: Package Desktop (Linux, ${{ matrix.electron_arch }}, ${{ matrix.variant }})
     if: ${{ inputs.package_desktop }}
     needs: build-cli-linux
+    outputs:
+      # ponytail: one Linux target; aggregate per-target IDs before expanding the matrix.
+      artifact_ids: ${{ steps.deb.outputs.artifact-id }},${{ steps.rpm.outputs.artifact-id }},${{ steps.flatpak.outputs.artifact-id }}
     runs-on: ${{ matrix.build_on }}
     strategy:
       fail-fast: false
@@ -303,7 +311,7 @@ jobs:
       - name: Download internal Shhield binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          name: internal-shhield-${{ matrix.target }}${{ matrix.variant_suffix }}
+          artifact-ids: ${{ needs.build-cli-linux.outputs.backend_artifact_id }}
           path: backend
 
       - name: Prepare desktop backend
@@ -365,25 +373,28 @@ jobs:
           find out/ -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.flatpak" \) -exec ls -lh {} \;
 
       - name: Upload .deb package
+        id: deb
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          retention-days: 1
-          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-deb
+          retention-days: 30
+          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-deb-${{ github.run_attempt }}
           path: ui/desktop/out/make/deb/${{ matrix.electron_arch }}/*${{ matrix.variant_suffix }}.deb
           if-no-files-found: error
 
       - name: Upload .rpm package
+        id: rpm
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          retention-days: 1
-          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-rpm
+          retention-days: 30
+          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-rpm-${{ github.run_attempt }}
           path: ui/desktop/out/make/rpm/${{ matrix.electron_arch }}/*${{ matrix.variant_suffix }}.rpm
           if-no-files-found: error
 
       - name: Upload .flatpak package
+        id: flatpak
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          retention-days: 1
-          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-flatpak
+          retention-days: 30
+          name: Shhield-linux-${{ matrix.electron_arch }}${{ matrix.variant_suffix }}-flatpak-${{ github.run_attempt }}
           path: ui/desktop/out/make/flatpak/${{ matrix.flatpak_arch }}/*${{ matrix.variant_suffix }}.flatpak
           if-no-files-found: error

@@ -1,0 +1,77 @@
+name: Prepare candidate
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      artifact_ids:
+        required: true
+        type: string
+    outputs:
+      artifact_id:
+        value: ${{ jobs.prepare.outputs.artifact_id }}
+      artifact_url:
+        value: ${{ jobs.prepare.outputs.artifact_url }}
+      sha256:
+        value: ${{ jobs.prepare.outputs.sha256 }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
+      sha256: ${{ steps.manifest.outputs.sha256 }}
+    env:
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ inputs.artifact_ids }}
+          merge-multiple: true
+          path: candidate
+      - name: Checkout update metadata generator
+        if: inputs.channel == 'production' && vars.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Generate optional macOS update metadata before freezing
+        if: inputs.channel == 'production' && vars.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true'
+        run: node source/ui/desktop/scripts/generate-mac-update-manifest.js --version "$VERSION" --directory candidate
+      - name: Check service and freeze candidate
+        id: manifest
+        run: |
+          node scripts/release-candidate.mjs check-backend "$CHANNEL"
+          node scripts/release-candidate.mjs create candidate
+      - name: Attest frozen files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: candidate/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        id: upload
+        with:
+          name: candidate-${{ inputs.channel }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate/*
+          retention-days: 30
+          if-no-files-found: error
