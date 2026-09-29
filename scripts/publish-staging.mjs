@@ -55,6 +55,7 @@ try {
     try { await fs.mkdir(parent, { mode: 0o755 }); }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     assert.ok((await fs.lstat(parent)).isDirectory(), 'Release parent must be a real directory');
+    await fs.chmod(parent, 0o755); // mkdir modes alone are narrowed by the publisher's umask.
   }
   let existing;
   try { existing = await fs.lstat(destination); }

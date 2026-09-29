@@ -27,8 +27,11 @@ const publish = (batch, destination = store) => spawnSync(process.execPath, [cli
 try {
   await fs.mkdir(store);
   const first = await prepare(identity);
-  const result = publish(first);
+  const result = spawnSync(process.execPath, ['--import', 'data:text/javascript,process.umask(0o077)', cli, first.directory, store], { env: first.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
+  for (const parent of ['releases', 'releases/1.2.3', `releases/1.2.3/${identity.source_sha}`]) {
+    assert.equal((await fs.stat(path.join(store, parent))).mode & 0o005, 0o005, 'Nginx must be able to traverse published parents despite restrictive umask');
+  }
   assert.equal(JSON.parse(await fs.readFile(path.join(store, 'current/update.json'), 'utf8')).channel, 'staging');
   assert.equal(await sha256(path.join(store, 'current/candidate.json')), first.env.CANDIDATE_SHA256);
   assert.equal(await fs.readFile(path.join(store, 'current/Shhield.zip'), 'utf8'), 'synthetic Shhield.zip');
