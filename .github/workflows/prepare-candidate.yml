@@ -47,18 +47,8 @@ jobs:
           artifact-ids: ${{ inputs.artifact_ids }}
           merge-multiple: true
           path: candidate
-      - name: Checkout update metadata generator
-        if: inputs.channel == 'production' && vars.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: gavin-k/shhield-ai
-          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
-          ref: ${{ inputs.source_sha }}
-          path: source
-          persist-credentials: false
-      - name: Generate optional macOS update metadata before freezing
-        if: inputs.channel == 'production' && vars.ENABLE_MAC_NATIVE_AUTO_UPDATE == 'true'
-        run: node source/ui/desktop/scripts/generate-mac-update-manifest.js --version "$VERSION" --directory candidate
+      - name: Generate channel-pinned update metadata before freezing
+        run: node scripts/generate-update-manifests.mjs candidate "$VERSION" "$CHANNEL" "$SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
       - name: Check service and freeze candidate
         id: manifest
         run: |

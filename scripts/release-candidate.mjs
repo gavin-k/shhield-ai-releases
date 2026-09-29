@@ -21,7 +21,7 @@ export async function sha256(file) {
   return hash.digest('hex');
 }
 
-function requiredPackages(identity) {
+export function requiredPackages(identity) {
   const label = identity.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
   return [
     [`${label}-${identity.version}-windows-x64.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11'],
@@ -38,6 +38,7 @@ function validatePackages(names, identity) {
     }
   }
   for (const name of names) {
+    if (name === 'update.json') continue;
     assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|sha256|deb|rpm|flatpak|yml)$/);
     assert.ok(!/unsigned|portable/i.test(name), `Non-release package: ${name}`);
     if (identity.channel === 'production') assert.ok(!/staging/i.test(name));
@@ -56,6 +57,7 @@ export async function createCandidate(directory, identity) {
     files.push({ name, size: stat.size, sha256: await sha256(file) });
   }
   const candidate = { ...identity, created_at: new Date().toISOString(), files };
+  await verifyUpdateMetadata(directory, candidate);
   await fs.writeFile(path.join(directory, 'candidate.json'), JSON.stringify(candidate, null, 2) + '\n', { flag: 'wx' });
   return candidate;
 }
@@ -78,7 +80,42 @@ export async function verifyCandidate(directory, expected = {}) {
     assert.equal(stat.size, file.size, `Wrong size: ${file.name}`);
     assert.equal(await sha256(actual), file.sha256, `Wrong SHA-256: ${file.name}`);
   }
+  await verifyUpdateMetadata(directory, candidate);
   return candidate;
+}
+
+export function updatePrefix(identity) {
+  return identity.channel === 'production' ? `https://download.shhield.ai/releases/${identity.version}/`
+    : `https://download.shhield.ai/staging/releases/${identity.version}/${identity.source_sha}/${identity.run_id}-${identity.run_attempt}/`;
+}
+
+async function verifyUpdateMetadata(directory, candidate) {
+  // Old accepted candidates predate update feeds; new prepare-candidate always generates them.
+  if (!candidate.files.some(file => file.name === 'update.json')) return;
+  const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));
+  assert.equal(feed.schema_version, 1);
+  assert.equal(feed.channel, candidate.channel === 'production' ? 'stable' : 'staging', 'update channel');
+  assert.equal(feed.version, candidate.version, 'update version');
+  assert.equal(feed.source_sha, candidate.source_sha, 'update source');
+  assert.ok(Number.isFinite(Date.parse(feed.published_at)), 'update timestamp');
+  const prefix = updatePrefix(candidate);
+  const packages = requiredPackages(candidate);
+  assert.equal(feed.artifacts.length, packages.length, 'update artifact count');
+  for (const [index, [name, id, platform, arch, format, minimum_os]] of packages.entries()) {
+    const file = candidate.files.find(item => item.name === name);
+    assert.deepEqual(feed.artifacts[index], { id, platform, arch, format, minimum_os, ...file, url: prefix + name }, 'update artifact does not match frozen package');
+  }
+  assert.ok(candidate.files.some(file => file.name === 'latest-mac.yml'), 'missing frozen macOS metadata');
+  const mac = JSON.parse(await fs.readFile(path.join(directory, 'latest-mac.yml'), 'utf8'));
+  const expected = [];
+  for (const [index, name] of ['Shhield-darwin-arm64.zip', 'Shhield-darwin-x64.zip'].entries()) {
+    const alias = candidate.files.find(file => file.name === name);
+    assert.ok(alias && alias.sha256 === feed.artifacts[index + 1].sha256 && alias.size === feed.artifacts[index + 1].size, 'macOS alias must preserve original bytes');
+    const hash = createHash('sha512');
+    for await (const chunk of createReadStream(path.join(directory, name))) hash.update(chunk);
+    expected.push({ url: prefix + name, sha512: hash.digest('base64'), size: alias.size });
+  }
+  assert.deepEqual(mac, { version: candidate.version, files: expected, path: expected[0].url, sha512: expected[0].sha512, releaseDate: feed.published_at }, 'macOS update metadata mismatch');
 }
 
 export function websiteManifest(candidate, publishedAt = new Date().toISOString()) {
