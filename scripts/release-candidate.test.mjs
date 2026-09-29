@@ -14,11 +14,20 @@ const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repe
 try {
   assert.throws(() => validateIdentity({ ...identity, version: '../1' }));
   assert.throws(() => validateIdentity({ ...identity, channel: 'preview' }));
-  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
+  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield-AI-1.2.3-windows-x64-portable.zip', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
   for (const name of names) await fs.writeFile(path.join(directory, name), `package ${name}`);
+  const portable = 'Shhield-AI-1.2.3-windows-x64-portable.zip';
+  await fs.unlink(path.join(directory, portable));
+  await assert.rejects(createCandidate(directory, identity), /Missing.*portable/);
+  await fs.writeFile(path.join(directory, portable), `package ${portable}`);
+  for (const name of ['Shhield-AI-1.2.3-windows-x64-portable-unsigned.zip', 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip', 'Shhield-AI-1.2.4-windows-x64-portable.zip']) {
+    await fs.writeFile(path.join(directory, name), 'unexpected portable');
+    await assert.rejects(createCandidate(directory, identity), /Non-release|Unexpected Portable/);
+    await fs.unlink(path.join(directory, name));
+  }
   const candidate = await createCandidate(directory, identity);
   await verifyCandidate(directory, identity);
-  assert.deepEqual(websiteManifest(candidate).artifacts.map(file => file.id), ['windows-msi', 'macos-arm64', 'macos-x64']);
+  assert.deepEqual(websiteManifest(candidate).artifacts.map(file => file.id), ['windows-msi', 'windows-portable', 'macos-arm64', 'macos-x64']);
   assert.throws(() => websiteManifest({ ...candidate, channel: 'staging' }));
   const originalExec = childProcess.execFileSync;
   const originalFetch = globalThis.fetch;
@@ -105,7 +114,7 @@ try {
   await assert.rejects(verifyCandidate(directory, identity));
   const stageDirectory = path.join(directory, 'staging');
   await fs.mkdir(stageDirectory);
-  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
     await fs.writeFile(path.join(stageDirectory, name), name);
   }
   const stageIdentity = { ...identity, channel: 'staging' };

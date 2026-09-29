@@ -15,7 +15,7 @@ try {
     const directory = path.join(root, channel);
     await fs.mkdir(directory);
     const label = channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-    const files = [`${label}-1.2.3-windows-x64.msi`, 'Shhield.zip', 'Shhield_intel_mac.zip'];
+    const files = [`${label}-1.2.3-windows-x64.msi`, `${label}-1.2.3-windows-x64-portable.zip`, 'Shhield.zip', 'Shhield_intel_mac.zip'];
     for (const name of files) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
     if (channel === 'production') for (const name of ['app.deb', 'app.rpm', 'app.flatpak']) await fs.writeFile(path.join(directory, name), name);
     const args = [cli, directory, '1.2.3', channel, sha, '123', '1'];
@@ -23,6 +23,12 @@ try {
     const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));
     assert.equal(feed.channel, channel === 'production' ? 'stable' : 'staging');
     assert.equal(feed.source_sha, sha);
+    assert.deepEqual(feed.artifacts.map(file => file.id).sort(), ['macos-arm64', 'macos-x64', 'windows-msi', 'windows-portable']);
+    const portable = feed.artifacts.find(file => file.id === 'windows-portable');
+    assert.equal(portable.name, `${label}-1.2.3-windows-x64-portable.zip`);
+    assert.equal(portable.format, 'zip');
+    assert.equal(portable.platform, 'windows');
+    assert.equal(portable.arch, 'x64');
     const prefix = channel === 'production' ? 'https://download.shhield.ai/releases/1.2.3/'
       : `https://download.shhield.ai/staging/releases/1.2.3/${sha}/123-1/`;
     for (const file of feed.artifacts) {

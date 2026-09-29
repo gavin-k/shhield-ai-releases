@@ -25,6 +25,7 @@ export function requiredPackages(identity) {
   const label = identity.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
   return [
     [`${label}-${identity.version}-windows-x64.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11'],
+    [`${label}-${identity.version}-windows-x64-portable.zip`, 'windows-portable', 'windows', 'x64', 'zip', 'Windows 11'],
     ['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
     ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12'],
   ];
@@ -40,7 +41,11 @@ function validatePackages(names, identity) {
   for (const name of names) {
     if (name === 'update.json') continue;
     assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|sha256|deb|rpm|flatpak|yml)$/);
-    assert.ok(!/unsigned|portable/i.test(name), `Non-release package: ${name}`);
+    assert.ok(!/unsigned/i.test(name), `Non-release package: ${name}`);
+    if (/portable/i.test(name)) {
+      const portable = requiredPackages(identity).find(([, id]) => id === 'windows-portable')[0];
+      assert.ok(name === portable || name === portable + '.sha256', `Unexpected Portable package: ${name}`);
+    }
     if (identity.channel === 'production') assert.ok(!/staging/i.test(name));
   }
 }
@@ -110,7 +115,8 @@ async function verifyUpdateMetadata(directory, candidate) {
   const expected = [];
   for (const [index, name] of ['Shhield-darwin-arm64.zip', 'Shhield-darwin-x64.zip'].entries()) {
     const alias = candidate.files.find(file => file.name === name);
-    assert.ok(alias && alias.sha256 === feed.artifacts[index + 1].sha256 && alias.size === feed.artifacts[index + 1].size, 'macOS alias must preserve original bytes');
+    const original = feed.artifacts.find(file => file.id === (index === 0 ? 'macos-arm64' : 'macos-x64'));
+    assert.ok(alias && alias.sha256 === original.sha256 && alias.size === original.size, 'macOS alias must preserve original bytes');
     const hash = createHash('sha512');
     for await (const chunk of createReadStream(path.join(directory, name))) hash.update(chunk);
     expected.push({ url: prefix + name, sha512: hash.digest('base64'), size: alias.size });
