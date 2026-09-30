@@ -1,0 +1,94 @@
+name: Validate reviewed source PR (offline)
+run-name: Offline PR validation (${{ inputs.validation_scope }}) from ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: 'Reviewed exact 40-character SHA in gavin-k/shhield-ai (unmerged PRs allowed)'
+        required: true
+        type: string
+      validation_scope:
+        description: 'all includes Rust; ui reruns only Desktop validation'
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - ui
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-pr-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  offline-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Validate dispatch identity
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VALIDATION_SCOPE: ${{ inputs.validation_scope }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          case "$VALIDATION_SCOPE" in all|ui) ;; *) exit 2 ;; esac
+      - name: Checkout trusted validation driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: driver
+          persist-credentials: false
+      - name: Fetch and export pinned private source without public diagnostics
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pr-validation"
+          if ! bash driver/scripts/pr-validation/export-source.sh >"$RUNNER_TEMP/pr-validation/export.log" 2>&1; then
+            echo 'Private source export failed; diagnostics were not published.' >&2
+            exit 1
+          fi
+      - name: Build validation tool image
+        run: bash driver/scripts/pr-validation/run.sh image
+      - name: Fetch locked dependencies without lifecycle hooks
+        run: bash driver/scripts/pr-validation/run.sh dependencies
+      - name: Build minimal CLI and run offline Rust mock tests
+        if: inputs.validation_scope == 'all'
+        run: bash driver/scripts/pr-validation/run.sh rust
+      - name: Build offline ACP SDK
+        run: bash driver/scripts/pr-validation/run.sh ui-sdk
+      - name: Check offline Desktop types
+        run: bash driver/scripts/pr-validation/run.sh ui-typecheck
+      - name: Compile offline Desktop translations
+        run: bash driver/scripts/pr-validation/run.sh ui-i18n
+      - name: Build offline Desktop renderer
+        run: bash driver/scripts/pr-validation/run.sh ui-renderer
+      - name: Run offline Desktop mock tests
+        run: bash driver/scripts/pr-validation/run.sh ui-tests
+      - name: Report validation scope
+        if: always()
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RESULT: ${{ job.status }}
+          VALIDATION_SCOPE: ${{ inputs.validation_scope }}
+        run: |
+          printf 'Source SHA: `%s`\n\nResult: %s\n\n' "$SOURCE_SHA" "$RESULT" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Requested scope: `%s`\n\n' "$VALIDATION_SCOPE" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$VALIDATION_SCOPE" == ui ]]; then
+            printf '%s\n' 'Rust was NOT run in this UI-only run. Earlier Rust evidence is separate and must match the same source SHA.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '%s\n' 'See individual step results. Only passing steps establish coverage.' \
+            'Minimal-feature Linux CLI build; privacy crate tests and Clippy; ACP SDK, Desktop typecheck, renderer build and selected UI mock tests.' \
+            'Selected mock tests only; no provider integration, installer validation, signing, publication or deployment. No source, binaries, caches or private diagnostics are uploaded.' \
+            'Detailed output is deliberately suppressed because this repository is public. For failure diagnostics, reproduce privately using scripts/pr-validation/README.md.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove ephemeral validation files
+        if: always()
+        run: |
+          if ! sudo rm -rf -- "$RUNNER_TEMP/pr-validation" >/dev/null 2>&1; then
+            echo 'Ephemeral validation cleanup failed.' >&2
+            exit 1
+          fi
