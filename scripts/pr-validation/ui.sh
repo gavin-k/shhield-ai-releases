@@ -2,12 +2,16 @@
 set -euo pipefail
 export npm_config_offline=true
 cd ui/desktop
-pnpm run build-shhield-acp-client
-pnpm run typecheck
-pnpm run i18n:compile
-pnpm exec vite build --config vite.renderer.config.mts
-# Explicit existing mock suite only. Never run provider integration, Playwright,
-# self-test recipes, the packaged application, or model checkpoint tests.
+stage=${1:-all}
+case "$stage" in all|sdk|typecheck|i18n|renderer|tests) ;; *) exit 2 ;; esac
+if [[ $stage == all || $stage == sdk ]]; then pnpm run build-shhield-acp-client; fi
+if [[ $stage == all || $stage == typecheck ]]; then pnpm run typecheck; fi
+if [[ $stage == all || $stage == i18n ]]; then pnpm run i18n:compile; fi
+if [[ $stage == all || $stage == renderer ]]; then
+  pnpm exec vite build --config vite.renderer.config.mts
+fi
+# Existing mocks only; no integration or application launch.
+if [[ $stage == all || $stage == tests ]]; then
 pnpm exec vitest run \
   src/components/privacy/PrivacyExchangePanel.test.tsx \
   src/components/privacy/PrivacyInputGuard.test.tsx \
@@ -22,3 +26,4 @@ pnpm exec vitest run \
   src/components/ChatInput.test.tsx \
   src/components/MessageQueue.stale-edit.test.tsx \
   src/hooks/useAutoSubmit.test.tsx
+fi

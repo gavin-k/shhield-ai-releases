@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mode=${1:?Expected image, dependencies, rust or ui}
-case "$mode" in image|dependencies|rust|ui) ;; *) exit 2 ;; esac
+mode=${1:?Expected a fixed validation mode}
+case "$mode" in image|dependencies|rust|ui|ui-sdk|ui-typecheck|ui-i18n|ui-renderer|ui-tests) ;; *) exit 2 ;; esac
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 state=${RUNNER_TEMP:?Set RUNNER_TEMP}/pr-validation
 image=shhield-pr-validation:local
@@ -28,6 +28,12 @@ if [[ $mode == dependencies ]]; then
     exit 1
   fi
 fi
+script=$mode
+stage=all
+if [[ $mode == ui-* ]]; then
+  script=ui
+  stage=${mode#ui-}
+fi
 network=none
 if [[ $mode == dependencies ]]; then network=bridge; fi
 if ! docker run --rm --init --network "$network" \
@@ -37,7 +43,7 @@ if ! docker run --rm --init --network "$network" \
   --mount "type=bind,src=$state/home,dst=/home/node" \
   --mount "type=bind,src=$root,dst=/validation,readonly" \
   --workdir /work \
-  "$image" bash "/validation/$mode.sh" >"$state/$mode.log" 2>&1; then
+  "$image" bash "/validation/$script.sh" "$stage" >"$state/$mode.log" 2>&1; then
   echo "$mode failed; private diagnostics were not published." >&2
   exit 1
 fi
