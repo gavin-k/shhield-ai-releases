@@ -83,7 +83,7 @@ class DriverTests(unittest.TestCase):
             sudo.chmod(0o755)
             env = dict(os.environ, RUNNER_TEMP=str(root), TRACE_FILE=str(root / 'trace'),
                        PATH=str(tools) + os.pathsep + os.environ['PATH'])
-            for mode, network in [('dependencies', 'bridge'), ('rust', 'none'), ('ui', 'none')]:
+            for mode, network in [('dependencies', 'bridge'), ('rust', 'none'), ('ui', 'none'), ('ui-sdk', 'none'), ('ui-typecheck', 'none'), ('ui-i18n', 'none'), ('ui-renderer', 'none'), ('ui-tests', 'none')]:
                 result = subprocess.run(['bash', str(ROOT / 'run.sh'), mode], env=env,
                                         text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -161,6 +161,20 @@ class DriverTests(unittest.TestCase):
             result = subprocess.run(['bash', str(ROOT / 'export-source.sh')],
                                     env=dict(env, SOURCE_SHA='main; exit 0'), capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_scope_and_stages_are_fixed(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn("if: inputs.validation_scope == 'all'", workflow)
+        self.assertIn('case "$VALIDATION_SCOPE" in all|ui)', workflow)
+        self.assertIn('Rust was NOT run in this UI-only run', workflow)
+        for stage in ['sdk', 'typecheck', 'i18n', 'renderer', 'tests']:
+            self.assertIn('run.sh ui-' + stage, workflow)
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(['bash', str(ROOT / 'run.sh'), 'ui-../../escape'],
+                                    env=dict(os.environ, RUNNER_TEMP=directory), capture_output=True)
+            self.assertEqual(result.returncode, 2)
+        ui = (ROOT / 'ui.sh').read_text()
+        self.assertIn('case "$stage" in all|sdk|typecheck|i18n|renderer|tests)', ui)
 
     def test_dependencies_cannot_build(self):
         text = (ROOT / 'dependencies.sh').read_text()
