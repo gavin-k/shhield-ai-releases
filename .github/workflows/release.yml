@@ -12,6 +12,11 @@ on:
         description: 'Exact reviewed commit SHA in the source repository'
         required: true
         type: string
+      windows_signing:
+        description: 'unsigned: Windows goes to staging testers only and production ships without it'
+        type: choice
+        options: [signed, unsigned]
+        default: signed
 
 permissions:
   contents: read
@@ -26,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
+      production_platforms: ${{ inputs.windows_signing == 'signed' && 'linux,macos,windows' || 'linux,macos' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -97,7 +103,7 @@ jobs:
       version: ${{ inputs.version }}
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: staging
-      signing: true
+      signing: ${{ inputs.windows_signing == 'signed' }}
     secrets: inherit
 
   staging-candidate:
@@ -111,6 +117,7 @@ jobs:
       version: ${{ inputs.version }}
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: staging
+      windows_signing: ${{ inputs.windows_signing }}
       artifact_ids: ${{ needs.staging-macos-arm64.outputs.package_artifact_id }},${{ needs.staging-macos-x64.outputs.package_artifact_id }},${{ needs.staging-windows.outputs.package_artifact_id }}
     secrets: inherit
 
@@ -124,6 +131,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
       CHANNEL: staging
+      WINDOWS_SIGNING: ${{ inputs.windows_signing }}
       CANDIDATE_SHA256: ${{ needs.staging-candidate.outputs.sha256 }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -170,6 +178,7 @@ jobs:
 
   production-windows:
     needs: [validate, accept-staging, staging-windows]
+    if: ${{ inputs.windows_signing == 'signed' }}
     permissions:
       contents: read
       id-token: write
@@ -193,6 +202,8 @@ jobs:
 
   production-candidate:
     needs: [validate, production-macos-arm64, production-macos-x64, production-windows, linux]
+    # production-windows is skipped, not failed, when Windows stays in staging.
+    if: ${{ !cancelled() && needs.production-macos-arm64.result == 'success' && needs.production-macos-x64.result == 'success' && needs.linux.result == 'success' && (needs.production-windows.result == 'success' || inputs.windows_signing == 'unsigned') }}
     permissions:
       contents: read
       id-token: write
@@ -202,11 +213,13 @@ jobs:
       version: ${{ inputs.version }}
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: production
-      artifact_ids: ${{ needs.production-macos-arm64.outputs.package_artifact_id }},${{ needs.production-macos-x64.outputs.package_artifact_id }},${{ needs.production-windows.outputs.package_artifact_id }},${{ needs.linux.outputs.package_artifact_ids }}
+      platforms: ${{ needs.validate.outputs.production_platforms }}
+      artifact_ids: ${{ needs.production-macos-arm64.outputs.package_artifact_id }},${{ needs.production-macos-x64.outputs.package_artifact_id }},${{ inputs.windows_signing == 'signed' && format('{0},', needs.production-windows.outputs.package_artifact_id) || '' }}${{ needs.linux.outputs.package_artifact_ids }}
     secrets: inherit
 
   publish:
     needs: [validate, production-candidate]
+    if: ${{ !cancelled() && needs.production-candidate.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -221,6 +234,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
       CHANNEL: production
+      RELEASE_PLATFORMS: ${{ needs.validate.outputs.production_platforms }}
       CANDIDATE_SHA256: ${{ needs.production-candidate.outputs.sha256 }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

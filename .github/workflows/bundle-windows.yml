@@ -58,8 +58,9 @@ jobs:
         env:
           SIGNING: ${{ inputs.signing }}
         run: |
-          if ($env:SIGNING -ne 'true') { throw 'Release candidates must be signed' }
           if ($env:SHHIELD_LICENSE_CHANNEL -notin @('staging', 'production')) { throw 'Invalid channel' }
+          # Unsigned MSIs only reach staging testers while the Windows certificate is pending.
+          if ($env:SIGNING -ne 'true' -and $env:SHHIELD_LICENSE_CHANNEL -ne 'staging') { throw 'Production packages must be signed' }
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -276,6 +277,7 @@ jobs:
           }
 
       - name: Package and verify Portable ZIP
+        if: ${{ inputs.signing }}
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -333,6 +335,11 @@ jobs:
             throw
           }
           $asset = @($release.assets | Where-Object { $_.name -match '^Shhield-AI-[0-9]+\.[0-9]+\.[0-9]+-windows-x64\.msi$' })
+          # Releases may skip Windows until its certificate lands; once shipped, publish refuses to drop it.
+          if ($asset.Count -eq 0) {
+            "$($release.tag_name) has no Windows MSI: use synthetic installer baseline" | Write-Host
+            exit 0
+          }
           if ($asset.Count -ne 1) { throw 'Previous release must contain exactly one Windows MSI' }
           $baselineDir = Join-Path $env:RUNNER_TEMP 'previous-release'
           gh release download $release.tag_name --repo gavin-k/shhield-ai-releases --pattern $asset[0].name --dir $baselineDir

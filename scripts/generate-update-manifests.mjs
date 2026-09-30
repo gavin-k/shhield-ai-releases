@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto';
 import { createReadStream, constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { requiredPackages, validateIdentity, sha256, updatePrefix } from './release-candidate.mjs';
+import { requiredPackages, scopeFromEnvironment, validateIdentity, sha256, updatePrefix } from './release-candidate.mjs';
 
 const [directoryArg, version, channel, source_sha, run_id, run_attempt, ...extra] = process.argv.slice(2);
 assert.equal(extra.length, 0, 'unexpected arguments');
 assert.ok(directoryArg, 'candidate directory required');
-const identity = { version, channel, source_sha, run_id, run_attempt, workflow_sha: source_sha };
+const identity = { version, channel, source_sha, run_id, run_attempt, workflow_sha: source_sha, ...scopeFromEnvironment() };
 validateIdentity(identity);
 const directory = path.resolve(directoryArg);
 const aliases = ['Shhield-darwin-arm64.zip', 'Shhield-darwin-x64.zip'];

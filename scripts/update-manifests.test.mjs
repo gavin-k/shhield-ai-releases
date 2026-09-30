@@ -57,6 +57,22 @@ try {
     await fs.appendFile(path.join(directory, 'latest-mac.yml'), ' ');
     await assert.rejects(verifyCandidate(directory, identity), /Wrong size|Wrong SHA-256/);
   }
+  // Windows certificate pending: unsigned staging MSI without Portable, and production without Windows.
+  for (const [channel, env, files, ids] of [
+    ['staging', { WINDOWS_SIGNING: 'unsigned' }, ['Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi'], ['macos-arm64', 'macos-x64', 'windows-msi']],
+    ['production', { RELEASE_PLATFORMS: 'linux,macos' }, ['app.deb', 'app.rpm', 'app.flatpak'], ['macos-arm64', 'macos-x64']],
+  ]) {
+    const directory = path.join(root, `scoped-${channel}`);
+    await fs.mkdir(directory);
+    for (const name of [...files, 'Shhield.zip', 'Shhield_intel_mac.zip']) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
+    execFileSync(process.execPath, [cli, directory, '1.2.3', channel, sha, '123', '1'], { env: { ...process.env, ...env } });
+    const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));
+    assert.deepEqual(feed.artifacts.map(file => file.id).sort(), ids);
+    const identity = { version: '1.2.3', channel, source_sha: sha, workflow_sha: 'b'.repeat(40), run_id: '123', run_attempt: '1',
+      ...(env.WINDOWS_SIGNING ? { windows_signing: env.WINDOWS_SIGNING } : {}), ...(env.RELEASE_PLATFORMS ? { platforms: env.RELEASE_PLATFORMS } : {}) };
+    await createCandidate(directory, identity);
+    await verifyCandidate(directory, identity);
+  }
   const missing = path.join(root, 'missing');
   await fs.mkdir(missing);
   assert.notEqual(spawnSync(process.execPath, [cli, missing, '1.2.3', 'preview', sha, '123', '1']).status, 0);

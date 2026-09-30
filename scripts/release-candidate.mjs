@@ -13,6 +13,41 @@ export function validateIdentity(identity) {
   assert.match(identity.workflow_sha, /^[a-f0-9]{40}$/);
   assert.match(identity.run_id, /^\d+$/);
   assert.match(identity.run_attempt, /^\d+$/);
+  if (identity.platforms !== undefined) {
+    const platforms = identity.platforms.split(',');
+    assert.ok(platforms.every((name, i) => PLATFORMS.includes(name) && (i === 0 || platforms[i - 1] < name)),
+      'Platforms must be a sorted, unique subset of linux,macos,windows');
+    assert.ok(platforms.includes('macos'), 'Every release ships macOS');
+    assert.ok(identity.channel === 'production' || !platforms.includes('linux'), 'Linux is built for production only');
+  }
+  if (identity.windows_signing !== undefined) {
+    assert.ok(['signed', 'unsigned'].includes(identity.windows_signing), 'Invalid Windows signing mode');
+    if (identity.windows_signing === 'unsigned') {
+      assert.equal(identity.channel, 'staging', 'Production Windows packages must be signed');
+      assert.ok(releaseScope(identity).platforms.includes('windows'), 'Unsigned mode requires a Windows package');
+    }
+  }
+}
+
+const PLATFORMS = ['linux', 'macos', 'windows'];
+const LINUX_SUFFIXES = ['.deb', '.rpm', '.flatpak'];
+
+// Windows may sit out production (or ship unsigned to staging) while its certificate is pending.
+// Candidates frozen before this scope existed carry no fields and keep their original package set.
+export function releaseScope(identity) {
+  const platforms = identity.platforms ?? (identity.channel === 'production' ? 'linux,macos,windows' : 'macos,windows');
+  return { platforms: platforms.split(','), unsignedWindows: identity.windows_signing === 'unsigned' };
+}
+
+export function scopeFromEnvironment(env = process.env) {
+  return { ...(env.RELEASE_PLATFORMS ? { platforms: env.RELEASE_PLATFORMS } : {}),
+    ...(env.WINDOWS_SIGNING ? { windows_signing: env.WINDOWS_SIGNING } : {}) };
+}
+
+// Download links and update feeds follow the latest release, so a new one must not drop a platform.
+export function offeredPlatforms(names) {
+  return PLATFORMS.filter(platform => names.some(name => platform === 'windows' ? name.endsWith('.msi')
+    : platform === 'macos' ? name === 'Shhield.zip' : LINUX_SUFFIXES.some(suffix => name.endsWith(suffix))));
 }
 
 export async function sha256(file) {
@@ -23,29 +58,43 @@ export async function sha256(file) {
 
 export function requiredPackages(identity) {
   const label = identity.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-  return [
-    [`${label}-${identity.version}-windows-x64.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11'],
-    [`${label}-${identity.version}-windows-x64-portable.zip`, 'windows-portable', 'windows', 'x64', 'zip', 'Windows 11'],
-    ['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
-    ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12'],
-  ];
+  const { platforms, unsignedWindows } = releaseScope(identity);
+  const packages = [];
+  if (platforms.includes('windows')) {
+    // Unsigned MSIs exist only for staging testers while the Windows certificate is pending; no Portable build.
+    packages.push([`${label}-${identity.version}-windows-x64${unsignedWindows ? '-unsigned' : ''}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11']);
+    if (!unsignedWindows) {
+      packages.push([`${label}-${identity.version}-windows-x64-portable.zip`, 'windows-portable', 'windows', 'x64', 'zip', 'Windows 11']);
+    }
+  }
+  packages.push(['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
+    ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
+  return packages;
 }
 
 function validatePackages(names, identity) {
-  for (const [name] of requiredPackages(identity)) assert.ok(names.includes(name), `Missing ${name}`);
-  if (identity.channel === 'production') {
-    for (const suffix of ['.deb', '.rpm', '.flatpak']) {
+  const packages = requiredPackages(identity);
+  const { platforms } = releaseScope(identity);
+  for (const [name] of packages) assert.ok(names.includes(name), `Missing ${name}`);
+  if (identity.channel === 'production' && platforms.includes('linux')) {
+    for (const suffix of LINUX_SUFFIXES) {
       assert.ok(names.some(name => name.endsWith(suffix)), `Missing Linux ${suffix}`);
     }
   }
+  const packageFile = id => packages.find(([, packageId]) => packageId === id)?.[0];
   for (const name of names) {
     if (name === 'update.json') continue;
     assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|sha256|deb|rpm|flatpak|yml)$/);
-    assert.ok(!/unsigned/i.test(name), `Non-release package: ${name}`);
-    if (/portable/i.test(name)) {
-      const portable = requiredPackages(identity).find(([, id]) => id === 'windows-portable')[0];
-      assert.ok(name === portable || name === portable + '.sha256', `Unexpected Portable package: ${name}`);
+    if (/unsigned/i.test(name)) {
+      const msi = packageFile('windows-msi');
+      assert.ok(msi && /unsigned/i.test(msi) && (name === msi || name === msi + '.sha256'), `Non-release package: ${name}`);
     }
+    if (/portable/i.test(name)) {
+      const portable = packageFile('windows-portable');
+      assert.ok(portable && (name === portable || name === portable + '.sha256'), `Unexpected Portable package: ${name}`);
+    }
+    if (!platforms.includes('windows')) assert.ok(!/windows/i.test(name), `Out-of-scope Windows file: ${name}`);
+    if (!platforms.includes('linux')) assert.ok(!LINUX_SUFFIXES.some(suffix => name.endsWith(suffix)), `Out-of-scope Linux file: ${name}`);
     if (identity.channel === 'production') assert.ok(!/staging/i.test(name));
   }
 }
@@ -184,7 +233,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   } else {
     const identity = { version: process.env.VERSION, channel: process.env.CHANNEL,
       source_sha: process.env.SOURCE_SHA, workflow_sha: process.env.GITHUB_SHA,
-      run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT };
+      run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, ...scopeFromEnvironment() };
     const expected = { ...identity };
     delete expected.run_attempt;
     const candidate = command === 'create'

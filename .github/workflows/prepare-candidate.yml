@@ -15,6 +15,12 @@ on:
       artifact_ids:
         required: true
         type: string
+      platforms:
+        default: ''
+        type: string
+      windows_signing:
+        default: ''
+        type: string
     outputs:
       artifact_id:
         value: ${{ jobs.prepare.outputs.artifact_id }}
@@ -38,6 +44,8 @@ jobs:
       VERSION: ${{ inputs.version }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       CHANNEL: ${{ inputs.channel }}
+      RELEASE_PLATFORMS: ${{ inputs.platforms }}
+      WINDOWS_SIGNING: ${{ inputs.windows_signing }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
