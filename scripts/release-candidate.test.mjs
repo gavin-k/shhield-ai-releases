@@ -6,7 +6,7 @@ import fsSync from 'node:fs';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
-import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend } from './release-candidate.mjs';
+import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend, offeredPlatforms } from './release-candidate.mjs';
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-candidate-'));
 const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repeat(40),
@@ -14,11 +14,20 @@ const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repe
 try {
   assert.throws(() => validateIdentity({ ...identity, version: '../1' }));
   assert.throws(() => validateIdentity({ ...identity, channel: 'preview' }));
-  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
+  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield-AI-1.2.3-windows-x64-portable.zip', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
   for (const name of names) await fs.writeFile(path.join(directory, name), `package ${name}`);
+  const portable = 'Shhield-AI-1.2.3-windows-x64-portable.zip';
+  await fs.unlink(path.join(directory, portable));
+  await assert.rejects(createCandidate(directory, identity), /Missing.*portable/);
+  await fs.writeFile(path.join(directory, portable), `package ${portable}`);
+  for (const name of ['Shhield-AI-1.2.3-windows-x64-portable-unsigned.zip', 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip', 'Shhield-AI-1.2.4-windows-x64-portable.zip']) {
+    await fs.writeFile(path.join(directory, name), 'unexpected portable');
+    await assert.rejects(createCandidate(directory, identity), /Non-release|Unexpected Portable/);
+    await fs.unlink(path.join(directory, name));
+  }
   const candidate = await createCandidate(directory, identity);
   await verifyCandidate(directory, identity);
-  assert.deepEqual(websiteManifest(candidate).artifacts.map(file => file.id), ['windows-msi', 'macos-arm64', 'macos-x64']);
+  assert.deepEqual(websiteManifest(candidate).artifacts.map(file => file.id), ['windows-msi', 'windows-portable', 'macos-arm64', 'macos-x64']);
   assert.throws(() => websiteManifest({ ...candidate, channel: 'staging' }));
   const originalExec = childProcess.execFileSync;
   const originalFetch = globalThis.fetch;
@@ -105,14 +114,70 @@ try {
   await assert.rejects(verifyCandidate(directory, identity));
   const stageDirectory = path.join(directory, 'staging');
   await fs.mkdir(stageDirectory);
-  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
     await fs.writeFile(path.join(stageDirectory, name), name);
   }
   const stageIdentity = { ...identity, channel: 'staging' };
   await createCandidate(stageDirectory, stageIdentity);
   await verifyCandidate(stageDirectory, stageIdentity);
   await assert.rejects(verifyCandidate(stageDirectory, identity), /Wrong channel/);
-  console.log('Candidate integrity, approval gates, backend identity, original-byte publication, safe retries and website contract checks passed');
+
+  // While the Windows certificate is pending, only staging testers get an unsigned MSI.
+  assert.throws(() => validateIdentity({ ...identity, windows_signing: 'unsigned' }), /must be signed/);
+  assert.throws(() => validateIdentity({ ...stageIdentity, windows_signing: 'maybe' }), /signing mode/);
+  assert.throws(() => validateIdentity({ ...stageIdentity, platforms: 'macos', windows_signing: 'unsigned' }), /requires a Windows/);
+  assert.throws(() => validateIdentity({ ...identity, platforms: 'linux,windows' }), /ships macOS/);
+  assert.throws(() => validateIdentity({ ...identity, platforms: 'macos,linux' }), /sorted, unique/);
+  assert.throws(() => validateIdentity({ ...stageIdentity, platforms: 'linux,macos' }), /production only/);
+  const unsignedDirectory = path.join(directory, 'unsigned-staging');
+  await fs.mkdir(unsignedDirectory);
+  const unsignedMsi = 'Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi';
+  for (const name of [unsignedMsi, `${unsignedMsi}.sha256`, 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+    await fs.writeFile(path.join(unsignedDirectory, name), name);
+  }
+  const unsignedIdentity = { ...stageIdentity, windows_signing: 'unsigned' };
+  await assert.rejects(createCandidate(unsignedDirectory, stageIdentity), /Missing Shhield-AI-Staging-1\.2\.3-windows-x64\.msi/);
+  const unsignedPortable = 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip';
+  await fs.writeFile(path.join(unsignedDirectory, unsignedPortable), 'unexpected portable');
+  await assert.rejects(createCandidate(unsignedDirectory, unsignedIdentity), /Unexpected Portable/);
+  await fs.unlink(path.join(unsignedDirectory, unsignedPortable));
+  await createCandidate(unsignedDirectory, unsignedIdentity);
+  await verifyCandidate(unsignedDirectory, unsignedIdentity);
+  await assert.rejects(verifyCandidate(unsignedDirectory, { ...unsignedIdentity, windows_signing: 'signed' }), /Wrong windows_signing/);
+
+  // Production can ship without Windows, but never with a stray Windows file.
+  const withoutWindows = path.join(directory, 'production-without-windows');
+  await fs.mkdir(withoutWindows);
+  for (const name of ['Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak']) {
+    await fs.writeFile(path.join(withoutWindows, name), name);
+  }
+  const withoutWindowsIdentity = { ...identity, platforms: 'linux,macos' };
+  await fs.writeFile(path.join(withoutWindows, 'Shhield-AI-1.2.3-windows-x64.msi'), 'stray msi');
+  await assert.rejects(createCandidate(withoutWindows, withoutWindowsIdentity), /Out-of-scope Windows/);
+  await fs.unlink(path.join(withoutWindows, 'Shhield-AI-1.2.3-windows-x64.msi'));
+  const macCandidate = await createCandidate(withoutWindows, withoutWindowsIdentity);
+  assert.deepEqual(websiteManifest(macCandidate).artifacts.map(file => file.id), ['macos-arm64', 'macos-x64']);
+  assert.deepEqual(offeredPlatforms(macCandidate.files.map(file => file.name)), ['linux', 'macos']);
+  assert.deepEqual(offeredPlatforms(candidate.files.map(file => file.name)), ['linux', 'macos', 'windows']);
+  const savedExec = childProcess.execFileSync;
+  const savedEnv = { ...process.env };
+  const savedArgv = [...process.argv];
+  try {
+    Object.assign(process.env, { GITHUB_REPOSITORY: 'gavin-k/shhield-ai-releases', VERSION: identity.version,
+      SOURCE_SHA: identity.source_sha, GITHUB_SHA: identity.workflow_sha, GITHUB_RUN_ID: identity.run_id,
+      CANDIDATE_SHA256: createHash('sha256').update(await fs.readFile(path.join(withoutWindows, 'candidate.json'))).digest('hex') });
+    process.argv[2] = withoutWindows;
+    childProcess.execFileSync = () => JSON.stringify({ tag_name: 'v1.2.2', draft: false, prerelease: false,
+      assets: candidate.files.map(file => ({ name: file.name.replace('1.2.3', '1.2.2') })) });
+    syncBuiltinESMExports();
+    await assert.rejects(import('./publish-candidate.mjs?drop-windows'), /remove platforms/);
+  } finally {
+    childProcess.execFileSync = savedExec;
+    syncBuiltinESMExports();
+    process.env = savedEnv;
+    process.argv = savedArgv;
+  }
+  console.log('Candidate integrity, approval gates, backend identity, original-byte publication, safe retries, website contract and Windows scope checks passed');
 } finally {
   await fs.rm(directory, { recursive: true, force: true });
 }

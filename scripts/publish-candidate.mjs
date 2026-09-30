@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { sha256, verifyCandidate, websiteManifest } from './release-candidate.mjs';
+import { offeredPlatforms, sha256, verifyCandidate, websiteManifest } from './release-candidate.mjs';
 
 const repository = process.env.GITHUB_REPOSITORY;
 assert.equal(repository, 'gavin-k/shhield-ai-releases');
@@ -33,6 +33,11 @@ const tag = `v${candidate.version}`;
 const latest = release('latest');
 if (latest && /^v\d+\.\d+\.\d+$/.test(latest.tag_name)) {
   assert.ok(compareVersions(tag, latest.tag_name) >= 0, 'An older candidate cannot replace the latest release');
+}
+if (latest) {
+  const offered = offeredPlatforms(candidate.files.map(file => file.name));
+  const dropped = offeredPlatforms(latest.assets.map(asset => asset.name)).filter(platform => !offered.includes(platform));
+  assert.deepEqual(dropped, [], 'The candidate would remove platforms the latest release already offers');
 }
 let current = release(`tags/${tag}`);
 if (!current) {
