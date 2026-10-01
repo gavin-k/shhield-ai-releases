@@ -52,6 +52,9 @@ jobs:
       CARGO_HOME: ${{ github.workspace }}\cargo-home
       CARGO_TARGET_DIR: ${{ github.workspace }}\target
       PNPM_STORE_DIR: ${{ github.workspace }}\pnpm-store
+      # Every pnpm call must use the store the install filled: the prePackage hook's
+      # `pnpm licenses list` otherwise reads the default D:\.pnpm-store and fails.
+      npm_config_store_dir: ${{ github.workspace }}\pnpm-store
     steps:
       - name: Validate signed channel
         shell: pwsh
@@ -165,7 +168,9 @@ jobs:
         run: |
           Set-Location ui/desktop
           pnpm install --frozen-lockfile --store-dir "$env:PNPM_STORE_DIR"
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm install failed' }
           node scripts/prepare-platform-binaries.js
+          if ($LASTEXITCODE -ne 0) { throw 'Preparing platform binaries failed' }
           pnpm run package --platform=win32 --arch=x64
           if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed' }
 
