@@ -17,6 +17,23 @@ on:
         required: false
         default: false
         type: boolean
+  # Release only reaches this build after staging is accepted; a manual run
+  # catches Linux breakage before that approval. Artifacts only, never published.
+  workflow_dispatch:
+    inputs:
+      version:
+        required: false
+        default: ""
+        type: string
+      source_sha:
+        description: 'Exact commit SHA in gavin-k/shhield-ai'
+        required: true
+        type: string
+      package_desktop:
+        description: 'Also package Linux desktop artifacts; CLI artifacts are always included'
+        required: false
+        default: false
+        type: boolean
 
 name: "Build CLI and optionally Desktop for Linux"
 
