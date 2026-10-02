@@ -206,6 +206,7 @@ export async function checkApprovalGates() {
     const environment = await get(`environments/${name}`);
     assert.ok(environment.protection_rules.some(rule => rule.type === 'required_reviewers' && rule.reviewers.length > 0),
       `${name} requires human reviewers`);
+    assert.equal(environment.can_admins_bypass, false, `${name} must disable administrator bypass`);
     assert.equal(environment.deployment_branch_policy?.custom_branch_policies, true, `${name} requires selected branches`);
     const policies = await get(`environments/${name}/deployment-branch-policies`);
     assert.equal(policies.total_count, 1, `${name} must allow only main`);

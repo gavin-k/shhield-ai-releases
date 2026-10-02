@@ -32,10 +32,14 @@ try {
   try {
     process.env.GITHUB_REPOSITORY = 'gavin-k/shhield-ai-releases';
     let reviewers = [{ type: 'User', reviewer: { id: 1 } }];
+    let canAdminsBypass = false;
     globalThis.fetch = async url => ({ status: 200, json: async () => url.endsWith('deployment-branch-policies')
       ? { total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }
-      : { protection_rules: [{ type: 'required_reviewers', reviewers }], deployment_branch_policy: { custom_branch_policies: true } } });
+      : { protection_rules: [{ type: 'required_reviewers', reviewers }], can_admins_bypass: canAdminsBypass, deployment_branch_policy: { custom_branch_policies: true } } });
     await checkApprovalGates();
+    canAdminsBypass = true;
+    await assert.rejects(checkApprovalGates(), /administrator bypass/);
+    canAdminsBypass = false;
     reviewers = [];
     await assert.rejects(checkApprovalGates(), /requires human reviewers/);
     globalThis.fetch = async () => ({ status: 200, json: async () => ({ staging: true, checkoutEnabled: true }) });

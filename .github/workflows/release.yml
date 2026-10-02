@@ -145,6 +145,7 @@ jobs:
       - name: Recheck approved candidate and staging service
         run: |
           node scripts/release-candidate.mjs verify candidate
+          node scripts/verify-downloads.mjs candidate
           node scripts/release-candidate.mjs check-backend staging
           node scripts/release-candidate.mjs check-backend production
 
@@ -250,4 +251,6 @@ jobs:
           node scripts/release-candidate.mjs verify candidate
           node scripts/release-candidate.mjs check-backend production
       - name: Publish original files and switch latest
-        run: node scripts/publish-candidate.mjs candidate
+        run: |
+          node scripts/publish-candidate.mjs candidate
+          node scripts/verify-downloads.mjs candidate

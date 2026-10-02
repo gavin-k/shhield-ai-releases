@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCandidate, verifyCandidate } from './release-candidate.mjs';
+import { verifyDownloads } from './verify-downloads.mjs';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-update-feeds-'));
 const cli = fileURLToPath(new URL('./generate-update-manifests.mjs', import.meta.url));
@@ -54,6 +55,38 @@ try {
     const candidate = await createCandidate(directory, identity);
     assert.ok(candidate.files.some(file => file.name === 'update.json'));
     await verifyCandidate(directory, identity);
+    const requested = [];
+    let brokenPath;
+    let wrongBytes = false;
+    let missingNoindex = false;
+    const request = async url => {
+      requested.push(url);
+      const name = path.basename(new URL(url).pathname);
+      if (brokenPath && url.endsWith(brokenPath)) return new Response('Not Found', { status: 404 });
+      const bytes = await fs.readFile(path.join(directory, name));
+      if (wrongBytes && name.endsWith('.msi')) bytes[0] ^= 1;
+      return new Response(bytes, { headers: {
+        'x-robots-tag': missingNoindex ? '' : 'noindex, nofollow', 'cache-control': 'no-store'
+      } });
+    };
+    await verifyDownloads(directory, request);
+    assert.equal(requested.length, candidate.files.length + 2);
+    assert.equal(requested[0], `https://download.shhield.ai/${feed.channel}/update.json`);
+    assert.equal(requested[1], `https://download.shhield.ai/${feed.channel}/latest-mac.yml`);
+    assert.deepEqual(requested.slice(2), candidate.files.map(file => prefix + file.name));
+    for (const name of ['update.json', 'latest-mac.yml', `${label}-1.2.3-windows-x64.msi`]) {
+      brokenPath = '/' + name;
+      await assert.rejects(verifyDownloads(directory, request), /Download unavailable/);
+    }
+    brokenPath = undefined;
+    wrongBytes = true;
+    await assert.rejects(verifyDownloads(directory, request), /Download hash mismatch/);
+    wrongBytes = false;
+    if (channel === 'staging') {
+      missingNoindex = true;
+      await assert.rejects(verifyDownloads(directory, request), /Missing noindex/);
+      missingNoindex = false;
+    }
     await fs.appendFile(path.join(directory, 'latest-mac.yml'), ' ');
     await assert.rejects(verifyCandidate(directory, identity), /Wrong size|Wrong SHA-256/);
   }
@@ -77,7 +110,7 @@ try {
   await fs.mkdir(missing);
   assert.notEqual(spawnSync(process.execPath, [cli, missing, '1.2.3', 'preview', sha, '123', '1']).status, 0);
   assert.deepEqual(await fs.readdir(missing), [], 'invalid identity must not generate metadata');
-  console.log('PASS channel-pinned immutable feeds, package hashes, original-byte aliases and frozen metadata integrity');
+  console.log('PASS immutable feeds, original-byte aliases, HTTPS downloads, missing feeds and corrupted packages');
 } finally {
   await fs.rm(root, { recursive: true, force: true });
 }
