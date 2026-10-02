@@ -1,0 +1,74 @@
+name: Publish signed staging
+run-name: Publish signed staging from release ${{ inputs.release_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: 'Existing Release run with a completed signed staging candidate'
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      release_run_id:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+concurrency:
+  group: publish-staging
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging-publish
+      url: https://staging.shhield.ai
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select frozen candidate from original release
+        id: release
+        env:
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: node scripts/staging-release-run.mjs select "$RELEASE_RUN_ID" candidate-run.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.release_run_id }}
+          artifact-ids: ${{ steps.release.outputs.artifact_id }}
+          path: candidate
+      - name: Verify original attestation and candidate identity
+        id: candidate
+        run: |
+          gh attestation verify candidate/candidate.json --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/prepare-candidate.yml" \
+            --deny-self-hosted-runners --format json > verified-attestation.json
+          node scripts/staging-release-run.mjs verify candidate-run.json candidate verified-attestation.json
+      - name: Publish signed staging candidate
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+          RELEASE_WORKFLOW_SHA: ${{ steps.candidate.outputs.workflow_sha }}
+          RELEASE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ steps.candidate.outputs.run_attempt }}
+          CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+          STAGING_SSH_TARGET: ${{ vars.STAGING_SSH_TARGET }}
+        run: |
+          GITHUB_SHA="$RELEASE_WORKFLOW_SHA" GITHUB_RUN_ID="$RELEASE_RUN_ID" GITHUB_RUN_ATTEMPT="$RELEASE_RUN_ATTEMPT" \
+            bash scripts/publish-staging-ssh.sh candidate
+      - name: Verify testing download and update channels
+        env:
+          CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        run: node scripts/verify-downloads.mjs candidate

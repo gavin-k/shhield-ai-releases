@@ -30,6 +30,9 @@ export async function verifyDownloads(directory, request = fetch) {
     assert.ok(file, `Missing frozen update metadata: ${name}`);
     await check(`https://download.shhield.ai/${channel}/${name}`, file);
   }
+  if (channel === 'staging') {
+    await check('https://download.shhield.ai/staging/latest.json', candidate.files.find(file => file.name === 'update.json'));
+  }
   for (const file of candidate.files) await check(updatePrefix(candidate) + file.name, file);
   return candidate;
 }
