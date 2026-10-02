@@ -1,0 +1,68 @@
+name: Validate Windows staging
+run-name: Validate Windows staging v${{ inputs.version }} from ${{ inputs.source_sha }}
+
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version without v (signed MSI validation only; no release)'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact reviewed commit SHA in the source repository'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-windows-${{ inputs.source_sha }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate build identity
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          ruby scripts/validate-windows-workflow.test.rb
+          node --input-type=module <<'NODE'
+          import { validateIdentity } from './scripts/release-candidate.mjs';
+          validateIdentity({ version: process.env.VERSION, channel: 'staging',
+            source_sha: process.env.SOURCE_SHA, workflow_sha: process.env.GITHUB_SHA,
+            run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT });
+          NODE
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned source belongs to main
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+
+  windows:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bundle-windows.yml
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ inputs.source_sha }}
+      channel: staging
+      signing: true
+    secrets: inherit

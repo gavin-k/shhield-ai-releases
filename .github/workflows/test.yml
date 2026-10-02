@@ -18,6 +18,8 @@ jobs:
           persist-credentials: false
       - name: Release script tests
         run: |
+          ruby scripts/validate-macos-workflow.test.rb
+          ruby scripts/validate-windows-workflow.test.rb
           node scripts/release-candidate.test.mjs
           node scripts/update-manifests.test.mjs
           node scripts/publish-staging.test.mjs
