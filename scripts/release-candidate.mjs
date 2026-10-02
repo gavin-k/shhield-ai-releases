@@ -33,7 +33,7 @@ const PLATFORMS = ['linux', 'macos', 'windows'];
 const LINUX_SUFFIXES = ['.deb', '.rpm', '.flatpak'];
 
 // Windows may sit out production (or ship unsigned to staging) while its certificate is pending.
-// Candidates frozen before this scope existed carry no fields and keep their original package set.
+// Candidates without explicit scope include all platforms for their channel.
 export function releaseScope(identity) {
   const platforms = identity.platforms ?? (identity.channel === 'production' ? 'linux,macos,windows' : 'macos,windows');
   return { platforms: platforms.split(','), unsignedWindows: identity.windows_signing === 'unsigned' };
@@ -61,11 +61,8 @@ export function requiredPackages(identity) {
   const { platforms, unsignedWindows } = releaseScope(identity);
   const packages = [];
   if (platforms.includes('windows')) {
-    // Unsigned MSIs exist only for staging testers while the Windows certificate is pending; no Portable build.
+    // Windows ships only an MSI; unsigned packages are restricted to staging testers.
     packages.push([`${label}-${identity.version}-windows-x64${unsignedWindows ? '-unsigned' : ''}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11']);
-    if (!unsignedWindows) {
-      packages.push([`${label}-${identity.version}-windows-x64-portable.zip`, 'windows-portable', 'windows', 'x64', 'zip', 'Windows 11']);
-    }
   }
   packages.push(['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
     ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
@@ -89,10 +86,7 @@ function validatePackages(names, identity) {
       const msi = packageFile('windows-msi');
       assert.ok(msi && /unsigned/i.test(msi) && (name === msi || name === msi + '.sha256'), `Non-release package: ${name}`);
     }
-    if (/portable/i.test(name)) {
-      const portable = packageFile('windows-portable');
-      assert.ok(portable && (name === portable || name === portable + '.sha256'), `Unexpected Portable package: ${name}`);
-    }
+    assert.ok(!/portable/i.test(name), `Unexpected Portable package: ${name}`);
     if (!platforms.includes('windows')) assert.ok(!/windows/i.test(name), `Out-of-scope Windows file: ${name}`);
     if (!platforms.includes('linux')) assert.ok(!LINUX_SUFFIXES.some(suffix => name.endsWith(suffix)), `Out-of-scope Linux file: ${name}`);
     if (identity.channel === 'production') assert.ok(!/staging/i.test(name));

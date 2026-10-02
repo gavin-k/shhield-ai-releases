@@ -281,46 +281,6 @@ jobs:
             if ($signature.Status -ne 'Valid') { throw "Signature invalid for ${file}: $($signature.Status)" }
           }
 
-      - name: Package and verify Portable ZIP
-        if: ${{ inputs.signing }}
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          if ($env:RELEASE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid Portable release version' }
-          Set-Location ui/desktop
-          node scripts/verify-portable-distribution.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Portable packaging boundary check failed' }
-          $work = Join-Path $env:RUNNER_TEMP ([Guid]::NewGuid().ToString())
-          New-Item -ItemType Directory -Path $work | Out-Null
-          $portable = Join-Path $work 'portable'
-          node scripts/windows-distribution.mjs stage-portable --app-dir "$env:APP_DIR" --output-dir $portable
-          if ($LASTEXITCODE -ne 0) { throw 'Portable staging failed' }
-          $label = if ($env:SHHIELD_LICENSE_CHANNEL -eq 'staging') { 'Shhield-AI-Staging' } else { 'Shhield-AI' }
-          $zip = Join-Path $env:GITHUB_WORKSPACE "windows-artifacts/$label-$env:RELEASE_VERSION-windows-x64-portable.zip"
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [IO.Compression.ZipFile]::CreateFromDirectory($portable, $zip)
-          $extracted = Join-Path $work 'extracted'
-          [IO.Compression.ZipFile]::ExtractToDirectory($zip, $extracted)
-          if ([IO.File]::ReadAllText((Join-Path $extracted 'portable.flag')) -ne "Shhield AI Portable`r`n") {
-            throw 'Portable marker missing or changed'
-          }
-          if (Test-Path (Join-Path $extracted 'Data')) { throw 'Portable ZIP must not contain user data' }
-          foreach ($source in Get-ChildItem $env:APP_DIR -File -Recurse) {
-            $relative = [IO.Path]::GetRelativePath($env:APP_DIR, $source.FullName)
-            $copy = Join-Path $extracted $relative
-            if ((Get-FileHash $source.FullName).Hash -ne (Get-FileHash $copy).Hash) {
-              throw "Portable ZIP changed file bytes: $relative"
-            }
-          }
-          foreach ($file in @('Shhield.exe', 'resources/bin/shhield.exe')) {
-            if ((Get-AuthenticodeSignature (Join-Path $extracted $file)).Status -ne 'Valid') {
-              throw "Portable signature invalid: $file"
-            }
-          }
-          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-          [IO.File]::WriteAllText("$zip.sha256", "$hash  $([IO.Path]::GetFileName($zip))`n", [Text.Encoding]::ASCII)
-
       - name: Resolve previous production MSI
         if: inputs.channel == 'production'
         id: baseline
@@ -372,6 +332,5 @@ jobs:
           name: Shhield-${{ inputs.channel }}-windows-x64-${{ github.run_attempt }}
           path: |
             windows-artifacts/*.msi
-            windows-artifacts/*-portable.zip
             windows-artifacts/*.sha256
           if-no-files-found: error
