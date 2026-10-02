@@ -46,6 +46,7 @@ jobs:
           node scripts/release-candidate.test.mjs
           node scripts/update-manifests.test.mjs
           node scripts/publish-staging.test.mjs
+          node scripts/staging-publish.test.mjs
           node scripts/release-candidate.mjs preflight
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -121,8 +122,19 @@ jobs:
       artifact_ids: ${{ needs.staging-macos-arm64.outputs.package_artifact_id }},${{ needs.staging-macos-x64.outputs.package_artifact_id }},${{ needs.staging-windows.outputs.package_artifact_id }}
     secrets: inherit
 
-  accept-staging:
+  publish-staging:
     needs: [validate, staging-candidate]
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    uses: ./.github/workflows/publish-staging.yml
+    with:
+      release_run_id: ${{ github.run_id }}
+    secrets: inherit
+
+  accept-staging:
+    needs: [validate, staging-candidate, publish-staging]
     runs-on: ubuntu-latest
     environment:
       name: staging-acceptance

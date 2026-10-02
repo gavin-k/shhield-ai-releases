@@ -61,8 +61,9 @@ try {
     let missingNoindex = false;
     const request = async url => {
       requested.push(url);
-      const name = path.basename(new URL(url).pathname);
+      let name = path.basename(new URL(url).pathname);
       if (brokenPath && url.endsWith(brokenPath)) return new Response('Not Found', { status: 404 });
+      if (channel === 'staging' && name === 'latest.json') name = 'update.json';
       const bytes = await fs.readFile(path.join(directory, name));
       if (wrongBytes && name.endsWith('.msi')) bytes[0] ^= 1;
       return new Response(bytes, { headers: {
@@ -70,11 +71,13 @@ try {
       } });
     };
     await verifyDownloads(directory, request);
-    assert.equal(requested.length, candidate.files.length + 2);
+    const feedCount = channel === 'staging' ? 3 : 2;
+    assert.equal(requested.length, candidate.files.length + feedCount);
     assert.equal(requested[0], `https://download.shhield.ai/${feed.channel}/update.json`);
     assert.equal(requested[1], `https://download.shhield.ai/${feed.channel}/latest-mac.yml`);
-    assert.deepEqual(requested.slice(2), candidate.files.map(file => prefix + file.name));
-    for (const name of ['update.json', 'latest-mac.yml', `${label}-1.2.3-windows-x64.msi`]) {
+    if (channel === 'staging') assert.equal(requested[2], 'https://download.shhield.ai/staging/latest.json');
+    assert.deepEqual(requested.slice(feedCount), candidate.files.map(file => prefix + file.name));
+    for (const name of ['update.json', 'latest-mac.yml', ...(channel === 'staging' ? ['latest.json'] : []), `${label}-1.2.3-windows-x64.msi`]) {
       brokenPath = '/' + name;
       await assert.rejects(verifyDownloads(directory, request), /Download unavailable/);
     }
