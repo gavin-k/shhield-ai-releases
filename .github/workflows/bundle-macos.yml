@@ -124,6 +124,9 @@ jobs:
         with:
           key: ${{ inputs.target == 'x86_64-apple-darwin' && 'intel-macos-deployment-target-12' || 'macos-deployment-target-12' }}
 
+      - name: Repair stale v8 prebuilt marker
+        run: bash .github/scripts/repair-v8-prebuilt.sh
+
       - name: Build shhield
         env:
           TARGET: ${{ inputs.target }}
