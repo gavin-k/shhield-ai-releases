@@ -281,7 +281,18 @@ jobs:
           test -n "$APPLE_ID"
           test -n "$APPLE_ID_PASSWORD"
           test -n "$APPLE_TEAM_ID"
-          pnpm run "$BUNDLE_SCRIPT"
+          # Stapling fetches the accepted ticket from Apple's CloudKit. macos-15-intel runners
+          # intermittently lose that connection (stapler error 68) for longer than the few seconds
+          # @electron/notarize retries, so rebuild and notarize again for that failure only.
+          set -o pipefail
+          log="$RUNNER_TEMP/bundle.log"
+          for attempt in 1 2 3; do
+            if pnpm run "$BUNDLE_SCRIPT" 2>&1 | tee "$log"; then exit 0; fi
+            grep -q 'Failed to staple your application with code: 68' "$log" || exit 1
+            echo "::warning::Stapling lost its CloudKit connection (attempt $attempt of 3)"
+            sleep 60
+          done
+          exit 1
         working-directory: ui/desktop
 
       - name: Check final signed ZIP
@@ -299,7 +310,16 @@ jobs:
           archive=Shhield.zip
           if [[ "$ARCH" == x64 ]]; then archive=Shhield_intel_mac.zip; fi
           zip="ui/desktop/$out/$app_name-darwin-$ARCH/$archive"
-          bash scripts/verify-macos-distribution.sh "$zip" "$SHHIELD_LICENSE_CHANNEL" "$ARCH" "$VERSION"
+          # stapler validate also looks the ticket up in CloudKit; only its exit code 68 (lookup
+          # failed) is retried, so a missing ticket or any other check still fails at once.
+          for attempt in 1 2 3 4 5; do
+            status=0
+            bash scripts/verify-macos-distribution.sh "$zip" "$SHHIELD_LICENSE_CHANNEL" "$ARCH" "$VERSION" || status=$?
+            [ "$status" -eq 68 ] || break
+            echo "::warning::stapler validate lost its CloudKit connection (attempt $attempt of 5)"
+            sleep $((attempt * 30))
+          done
+          [ "$status" -eq 0 ] || exit "$status"
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
 
       - name: Clean up signing keychain
