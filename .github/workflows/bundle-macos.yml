@@ -130,6 +130,10 @@ jobs:
       - name: Build shhield
         env:
           TARGET: ${{ inputs.target }}
+          # Homebrew's OpenSSL 4 returns const X509 names, which the cpp-httplib vendored by
+          # llama-cpp-sys-2 0.1.146 does not compile against. Shhield never calls llama.cpp's HTTPS
+          # downloads, and its build script forwards CMAKE_* variables to CMake.
+          CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: 'ON'
         run: |
           source ./bin/activate-hermit
           rustup target add "$TARGET"
