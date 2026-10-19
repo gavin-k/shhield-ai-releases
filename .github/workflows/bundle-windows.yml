@@ -135,9 +135,11 @@ jobs:
         if: inputs.backend_artifact_id == ''
         shell: pwsh
         run: |
+          # The feature set lives in crates/shhield-cli/Cargo.toml (windows-desktop)
+          # so that features upstream adds to the default build reach Windows too.
           cargo build --release -p shhield-cli --bin shhield `
             --no-default-features `
-            --features local-inference,rustls-tls,system-keyring
+            --features windows-desktop
           if ($LASTEXITCODE -ne 0) { throw 'Rust backend build failed' }
 
           $binDir = 'ui/desktop/src/bin'
