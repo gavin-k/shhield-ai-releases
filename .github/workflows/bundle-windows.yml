@@ -118,6 +118,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           bash scripts/set-cargo-version.sh "${VERSION#v}"
+          # Cargo.lock records the workspace member versions. The production job reuses
+          # the staging backend and never runs cargo build, so sync the lock here or the
+          # third-party notices step fails on `cargo metadata --locked`.
+          cargo update --workspace
           cd ui/desktop
           npm pkg set "version=${VERSION#v}"
 
