@@ -27,6 +27,11 @@ on:
         required: false
         type: boolean
         default: false
+      nsis:
+        description: 'Also build the NSIS setup next to the MSI'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -110,6 +115,11 @@ jobs:
           }
           (Split-Path $candlePath) | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path $env:CARGO_HOME, $env:CARGO_TARGET_DIR, $env:PNPM_STORE_DIR | Out-Null
+
+      - name: Pin NSIS compiler
+        if: ${{ inputs.nsis }}
+        shell: pwsh
+        run: ./ui/desktop/installer/nsis/ensure-makensis.ps1
 
       - name: Apply release version
         if: ${{ inputs.version != '' }}
@@ -330,6 +340,100 @@ jobs:
             -Channel '${{ inputs.channel }}' `
             -BaselineMsiPath '${{ steps.baseline.outputs.path }}'
 
+      # The NSIS setup is built after the MSI proves itself so a broken setup never blocks the MSI
+      # evidence. It wraps the same signed APP_DIR; only the shipped, hook-free package is uploaded.
+      - name: Build NSIS setup UI
+        if: ${{ inputs.nsis }}
+        shell: pwsh
+        run: ./ui/desktop/installer/nsis/build-native.ps1 -Kind plugin -OutDir "$env:RUNNER_TEMP\nsis-native"
+
+      - name: Build NSIS setup
+        if: ${{ inputs.nsis }}
+        id: nsis
+        shell: pwsh
+        env:
+          SIGNING: ${{ inputs.signing }}
+          NSIS_CHANNEL: ${{ inputs.channel == 'staging' && 'staging' || 'stable' }}
+        run: |
+          $arguments = @(
+            'ui/desktop/scripts/windows-nsis.mjs', 'build-nsis',
+            '--app-dir', "$env:APP_DIR",
+            '--output-dir', "$env:GITHUB_WORKSPACE/windows-artifacts",
+            '--version', '${{ steps.version.outputs.value }}',
+            '--channel', "$env:NSIS_CHANNEL",
+            '--plugin-dir', "$env:RUNNER_TEMP\nsis-native"
+          )
+          if ($env:SIGNING -ne 'true') { $arguments += @('--unsigned', 'true') }
+          & node @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS setup build failed' }
+
+      - name: Build NSIS upgrade package with test hooks
+        if: ${{ inputs.nsis }}
+        id: nsis-hook
+        shell: pwsh
+        env:
+          NSIS_CHANNEL: ${{ inputs.channel == 'staging' && 'staging' || 'stable' }}
+        run: |
+          # Fault injection and the upgrade path need a newer package. It carries test hooks, stays
+          # unsigned, and lives outside windows-artifacts so it can never be uploaded or released.
+          $parts = '${{ steps.version.outputs.value }}'.Split('.')
+          $parts[2] = [string]([int]$parts[2] + 1)
+          $upgrade = $parts -join '.'
+          node ui/desktop/scripts/windows-nsis.mjs build-nsis --app-dir "$env:APP_DIR" --output-dir "$env:RUNNER_TEMP\nsis-hook" `
+            --version $upgrade --channel "$env:NSIS_CHANNEL" --plugin-dir "$env:RUNNER_TEMP\nsis-native" --unsigned true --test-hooks true
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS upgrade package build failed' }
+          "version=$upgrade" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Sign NSIS setup
+        if: ${{ inputs.signing && inputs.nsis }}
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2.0.0
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files: ${{ steps.nsis.outputs.package }}
+
+      - name: Checksum NSIS setup
+        if: ${{ inputs.nsis }}
+        shell: pwsh
+        run: |
+          # Signing changes the bytes, so the sidecar written by the build is replaced here.
+          $file = Get-Item '${{ steps.nsis.outputs.package }}'
+          $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$($file.FullName).sha256", "$hash  $($file.Name)`n", [Text.Encoding]::ASCII)
+
+      - name: Verify NSIS setup signature
+        if: ${{ inputs.signing && inputs.nsis }}
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature '${{ steps.nsis.outputs.package }}'
+          if ($signature.Status -ne 'Valid') { throw "Signature invalid for the NSIS setup: $($signature.Status)" }
+
+      - name: Smoke NSIS lifecycle
+        if: ${{ inputs.nsis }}
+        timeout-minutes: 60
+        shell: pwsh
+        env:
+          NSIS_CHANNEL: ${{ inputs.channel == 'staging' && 'staging' || 'stable' }}
+        run: |
+          ./scripts/verify-windows-nsis.ps1 `
+            -SetupPath '${{ steps.nsis.outputs.package }}' `
+            -UpgradeSetupPath '${{ steps.nsis-hook.outputs.package }}' `
+            -Version '${{ steps.version.outputs.value }}' `
+            -UpgradeVersion '${{ steps.nsis-hook.outputs.version }}' `
+            -Channel "$env:NSIS_CHANNEL" `
+            -BaselineMsiPath '${{ steps.baseline.outputs.path }}' `
+            -ReportDirectory "$env:RUNNER_TEMP\nsis-report"
+
+      - name: Upload NSIS smoke report
+        if: ${{ always() && inputs.nsis }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          retention-days: 30
+          name: Shhield-${{ inputs.channel }}-windows-nsis-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nsis-report
+          if-no-files-found: warn
+
       - name: Upload Windows build
         id: package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -338,5 +442,6 @@ jobs:
           name: Shhield-${{ inputs.channel }}-windows-x64-${{ github.run_attempt }}
           path: |
             windows-artifacts/*.msi
+            windows-artifacts/*.exe
             windows-artifacts/*.sha256
           if-no-files-found: error
