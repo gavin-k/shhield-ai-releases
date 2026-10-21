@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCandidate, verifyCandidate } from './release-candidate.mjs';
+import { createCandidate, scopeFromEnvironment, verifyCandidate } from './release-candidate.mjs';
 import { verifyDownloads } from './verify-downloads.mjs';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-update-feeds-'));
@@ -30,6 +30,9 @@ try {
     assert.equal(msi.format, 'msi');
     assert.equal(msi.platform, 'windows');
     assert.equal(msi.arch, 'x64');
+    assert.equal(msi.package_type, 'msi');
+    assert.equal(msi.min_updater, '1.0.0');
+    assert.ok(feed.artifacts.every(file => file.package_type === file.format && file.min_updater === '1.0.0'));
     const prefix = channel === 'production' ? 'https://download.shhield.ai/releases/1.2.3/'
       : `https://download.shhield.ai/staging/releases/1.2.3/${sha}/123-1/`;
     for (const file of feed.artifacts) {
@@ -94,21 +97,37 @@ try {
     await assert.rejects(verifyCandidate(directory, identity), /Wrong size|Wrong SHA-256/);
   }
   // Windows certificate pending: unsigned staging MSI without Portable, and production without Windows.
-  for (const [channel, env, files, ids] of [
-    ['staging', { WINDOWS_SIGNING: 'unsigned' }, ['Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi'], ['macos-arm64', 'macos-x64', 'windows-msi']],
-    ['production', { RELEASE_PLATFORMS: 'linux,macos' }, ['app.deb', 'app.rpm', 'app.flatpak'], ['macos-arm64', 'macos-x64']],
+  // NSIS releases add a windows-nsis artifact that only updaters at or above NSIS_MIN_UPDATER select.
+  const nsis = { WINDOWS_PACKAGES: 'msi,nsis', NSIS_MIN_UPDATER: '1.1.0' };
+  for (const [name, channel, env, files, ids] of [
+    ['staging', 'staging', { WINDOWS_SIGNING: 'unsigned' }, ['Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi'], ['macos-arm64', 'macos-x64', 'windows-msi']],
+    ['production', 'production', { RELEASE_PLATFORMS: 'linux,macos' }, ['app.deb', 'app.rpm', 'app.flatpak'], ['macos-arm64', 'macos-x64']],
+    ['staging-nsis', 'staging', { WINDOWS_SIGNING: 'unsigned', ...nsis }, ['Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi', 'Shhield-AI-Staging-1.2.3-windows-x64-setup-unsigned.exe'], ['macos-arm64', 'macos-x64', 'windows-msi', 'windows-nsis']],
+    ['production-nsis', 'production', nsis, ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield-AI-1.2.3-windows-x64-setup.exe', 'app.deb', 'app.rpm', 'app.flatpak'], ['macos-arm64', 'macos-x64', 'windows-msi', 'windows-nsis']],
   ]) {
-    const directory = path.join(root, `scoped-${channel}`);
+    const directory = path.join(root, `scoped-${name}`);
     await fs.mkdir(directory);
-    for (const name of [...files, 'Shhield.zip', 'Shhield_intel_mac.zip']) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
+    for (const file of [...files, 'Shhield.zip', 'Shhield_intel_mac.zip']) await fs.writeFile(path.join(directory, file), `synthetic ${file}`);
     execFileSync(process.execPath, [cli, directory, '1.2.3', channel, sha, '123', '1'], { env: { ...process.env, ...env } });
     const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));
     assert.deepEqual(feed.artifacts.map(file => file.id).sort(), ids);
-    const identity = { version: '1.2.3', channel, source_sha: sha, workflow_sha: 'b'.repeat(40), run_id: '123', run_attempt: '1',
-      ...(env.WINDOWS_SIGNING ? { windows_signing: env.WINDOWS_SIGNING } : {}), ...(env.RELEASE_PLATFORMS ? { platforms: env.RELEASE_PLATFORMS } : {}) };
+    const setup = feed.artifacts.find(file => file.id === 'windows-nsis');
+    if (env.WINDOWS_PACKAGES) {
+      assert.equal(setup.name, files.find(file => file.endsWith('.exe')));
+      assert.deepEqual([setup.platform, setup.arch, setup.format, setup.package_type, setup.min_updater], ['windows', 'x64', 'exe', 'nsis', '1.1.0']);
+      assert.equal(feed.artifacts.find(file => file.id === 'windows-msi').min_updater, '1.0.0');
+    } else {
+      assert.equal(setup, undefined);
+    }
+    const identity = { version: '1.2.3', channel, source_sha: sha, workflow_sha: 'b'.repeat(40), run_id: '123', run_attempt: '1', ...scopeFromEnvironment(env) };
     await createCandidate(directory, identity);
     await verifyCandidate(directory, identity);
   }
+  // Generating a feed with NSIS in scope but no updater floor must fail before touching the directory.
+  const unfloored = path.join(root, 'unfloored-nsis');
+  await fs.mkdir(unfloored);
+  assert.notEqual(spawnSync(process.execPath, [cli, unfloored, '1.2.3', 'production', sha, '123', '1'], { env: { ...process.env, WINDOWS_PACKAGES: 'msi,nsis' } }).status, 0);
+  assert.deepEqual(await fs.readdir(unfloored), [], 'invalid NSIS identity must not generate metadata');
   const missing = path.join(root, 'missing');
   await fs.mkdir(missing);
   assert.notEqual(spawnSync(process.execPath, [cli, missing, '1.2.3', 'preview', sha, '123', '1']).status, 0);

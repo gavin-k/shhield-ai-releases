@@ -21,6 +21,12 @@ on:
       windows_signing:
         default: ''
         type: string
+      windows_packages:
+        default: ''
+        type: string
+      nsis_min_updater:
+        default: ''
+        type: string
     outputs:
       artifact_id:
         value: ${{ jobs.prepare.outputs.artifact_id }}
@@ -46,6 +52,8 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       RELEASE_PLATFORMS: ${{ inputs.platforms }}
       WINDOWS_SIGNING: ${{ inputs.windows_signing }}
+      WINDOWS_PACKAGES: ${{ inputs.windows_packages }}
+      NSIS_MIN_UPDATER: ${{ inputs.nsis_min_updater }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

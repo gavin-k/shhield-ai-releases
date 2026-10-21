@@ -27,21 +27,39 @@ export function validateIdentity(identity) {
       assert.ok(releaseScope(identity).platforms.includes('windows'), 'Unsigned mode requires a Windows package');
     }
   }
+  if (identity.windows_packages !== undefined) {
+    assert.ok(WINDOWS_PACKAGE_SETS.includes(identity.windows_packages), 'Windows packages must be msi or msi,nsis');
+  }
+  if (releaseScope(identity).nsis) {
+    assert.ok(releaseScope(identity).platforms.includes('windows'), 'The NSIS package requires Windows in scope');
+    // The NSIS package is only offered to desktop builds whose updater can apply it. That version is
+    // a release decision, not something this script can infer, so each NSIS release states it.
+    assert.match(String(identity.nsis_min_updater), /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
+      'An NSIS release must name the oldest desktop updater that can install it (nsis_min_updater)');
+  } else {
+    assert.equal(identity.nsis_min_updater, undefined, 'nsis_min_updater only applies to NSIS releases');
+  }
 }
 
 const PLATFORMS = ['linux', 'macos', 'windows'];
 const LINUX_SUFFIXES = ['.deb', '.rpm', '.flatpak'];
+// The MSI stays the package every existing Windows client can update to; the NSIS setup is an
+// additional artifact that only newer updaters select, so a release opts into shipping both.
+const WINDOWS_PACKAGE_SETS = ['msi', 'msi,nsis'];
 
 // Windows may sit out production (or ship unsigned to staging) while its certificate is pending.
 // Candidates without explicit scope include all platforms for their channel.
 export function releaseScope(identity) {
   const platforms = identity.platforms ?? (identity.channel === 'production' ? 'linux,macos,windows' : 'macos,windows');
-  return { platforms: platforms.split(','), unsignedWindows: identity.windows_signing === 'unsigned' };
+  return { platforms: platforms.split(','), unsignedWindows: identity.windows_signing === 'unsigned',
+    nsis: identity.windows_packages === 'msi,nsis' };
 }
 
 export function scopeFromEnvironment(env = process.env) {
   return { ...(env.RELEASE_PLATFORMS ? { platforms: env.RELEASE_PLATFORMS } : {}),
-    ...(env.WINDOWS_SIGNING ? { windows_signing: env.WINDOWS_SIGNING } : {}) };
+    ...(env.WINDOWS_SIGNING ? { windows_signing: env.WINDOWS_SIGNING } : {}),
+    ...(env.WINDOWS_PACKAGES ? { windows_packages: env.WINDOWS_PACKAGES } : {}),
+    ...(env.NSIS_MIN_UPDATER ? { nsis_min_updater: env.NSIS_MIN_UPDATER } : {}) };
 }
 
 // Download links and update feeds follow the latest release, so a new one must not drop a platform.
@@ -56,16 +74,22 @@ export async function sha256(file) {
   return hash.digest('hex');
 }
 
+// Each entry: [name, id, platform, arch, format, minimum_os, package_type, min_updater]. The last two
+// are published in update feeds; clients older than min_updater ignore the artifact.
 export function requiredPackages(identity) {
   const label = identity.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-  const { platforms, unsignedWindows } = releaseScope(identity);
+  const { platforms, unsignedWindows, nsis } = releaseScope(identity);
+  const unsigned = unsignedWindows ? '-unsigned' : '';
   const packages = [];
   if (platforms.includes('windows')) {
-    // Windows ships only an MSI; unsigned packages are restricted to staging testers.
-    packages.push([`${label}-${identity.version}-windows-x64${unsignedWindows ? '-unsigned' : ''}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11']);
+    // Every Windows release ships the MSI; unsigned packages are restricted to staging testers.
+    packages.push([`${label}-${identity.version}-windows-x64${unsigned}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11', 'msi', '1.0.0']);
+    if (nsis) {
+      packages.push([`${label}-${identity.version}-windows-x64-setup${unsigned}.exe`, 'windows-nsis', 'windows', 'x64', 'exe', 'Windows 11', 'nsis', identity.nsis_min_updater]);
+    }
   }
-  packages.push(['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
-    ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
+  packages.push(['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12', 'zip', '1.0.0'],
+    ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12', 'zip', '1.0.0']);
   return packages;
 }
 
@@ -81,10 +105,15 @@ function validatePackages(names, identity) {
   const packageFile = id => packages.find(([, packageId]) => packageId === id)?.[0];
   for (const name of names) {
     if (name === 'update.json') continue;
-    assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|sha256|deb|rpm|flatpak|yml)$/);
+    assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|exe|sha256|deb|rpm|flatpak|yml)$/);
+    if (/\.exe(\.sha256)?$/.test(name)) {
+      // Executables are never accepted implicitly: only the NSIS setup a release opted into.
+      const setup = packageFile('windows-nsis');
+      assert.ok(setup && (name === setup || name === setup + '.sha256'), `Unexpected executable: ${name}`);
+    }
     if (/unsigned/i.test(name)) {
-      const msi = packageFile('windows-msi');
-      assert.ok(msi && /unsigned/i.test(msi) && (name === msi || name === msi + '.sha256'), `Non-release package: ${name}`);
+      const unsignedPackages = packages.map(([file]) => file).filter(file => /unsigned/i.test(file));
+      assert.ok(unsignedPackages.some(file => name === file || name === file + '.sha256'), `Non-release package: ${name}`);
     }
     assert.ok(!/portable/i.test(name), `Unexpected Portable package: ${name}`);
     if (!platforms.includes('windows')) assert.ok(!/windows/i.test(name), `Out-of-scope Windows file: ${name}`);
@@ -149,9 +178,9 @@ async function verifyUpdateMetadata(directory, candidate) {
   const prefix = updatePrefix(candidate);
   const packages = requiredPackages(candidate);
   assert.equal(feed.artifacts.length, packages.length, 'update artifact count');
-  for (const [index, [name, id, platform, arch, format, minimum_os]] of packages.entries()) {
+  for (const [index, [name, id, platform, arch, format, minimum_os, package_type, min_updater]] of packages.entries()) {
     const file = candidate.files.find(item => item.name === name);
-    assert.deepEqual(feed.artifacts[index], { id, platform, arch, format, minimum_os, ...file, url: prefix + name }, 'update artifact does not match frozen package');
+    assert.deepEqual(feed.artifacts[index], { id, platform, arch, format, minimum_os, package_type, min_updater, ...file, url: prefix + name }, 'update artifact does not match frozen package');
   }
   assert.ok(candidate.files.some(file => file.name === 'latest-mac.yml'), 'missing frozen macOS metadata');
   const mac = JSON.parse(await fs.readFile(path.join(directory, 'latest-mac.yml'), 'utf8'));
@@ -172,10 +201,10 @@ export function websiteManifest(candidate, publishedAt = new Date().toISOString(
   return {
     version: candidate.version,
     published_at: publishedAt,
-    artifacts: requiredPackages(candidate).map(([name, id, platform, arch, format, minimum_os]) => {
+    artifacts: requiredPackages(candidate).map(([name, id, platform, arch, format, minimum_os, package_type, min_updater]) => {
       const file = candidate.files.find(item => item.name === name);
       assert.ok(file, `Missing ${name}`);
-      return { id, platform, arch, format, minimum_os, ...file,
+      return { id, platform, arch, format, minimum_os, package_type, min_updater, ...file,
         url: `https://download.shhield.ai/releases/${candidate.version}/${name}` };
     }),
   };
@@ -221,7 +250,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     console.log(`Backend ready: ${await checkBackend(directory)}`);
   } else if (command === 'preflight') {
     validateIdentity({ version: process.env.VERSION, channel: 'staging', source_sha: process.env.SOURCE_SHA,
-      workflow_sha: process.env.GITHUB_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT });
+      workflow_sha: process.env.GITHUB_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+      ...scopeFromEnvironment() });
     await checkApprovalGates();
     await checkBackend('staging');
     console.log('Release identity, approval gates and staging service verified');

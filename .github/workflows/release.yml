@@ -17,6 +17,15 @@ on:
         type: choice
         options: [signed, unsigned]
         default: signed
+      windows_packages:
+        description: 'msi,nsis: also ship the NSIS setup; only updaters at or above nsis_min_updater select it'
+        type: choice
+        options: [msi, 'msi,nsis']
+        default: msi
+      nsis_min_updater:
+        description: 'Oldest desktop version whose updater installs NSIS packages (required for msi,nsis)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -32,6 +41,9 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
       production_platforms: ${{ inputs.windows_signing == 'signed' && 'linux,macos,windows' || 'linux,macos' }}
+      # Production drops Windows entirely while unsigned, so the NSIS option only follows signed Windows.
+      production_windows_packages: ${{ inputs.windows_signing == 'signed' && inputs.windows_packages || 'msi' }}
+      production_nsis_min_updater: ${{ inputs.windows_signing == 'signed' && inputs.windows_packages == 'msi,nsis' && inputs.nsis_min_updater || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,6 +52,8 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          WINDOWS_PACKAGES: ${{ inputs.windows_packages }}
+          NSIS_MIN_UPDATER: ${{ inputs.nsis_min_updater }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           test "$GITHUB_REF" = refs/heads/main
@@ -105,6 +119,7 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: staging
       signing: ${{ inputs.windows_signing == 'signed' }}
+      nsis: ${{ inputs.windows_packages == 'msi,nsis' }}
     secrets: inherit
 
   staging-candidate:
@@ -119,6 +134,8 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: staging
       windows_signing: ${{ inputs.windows_signing }}
+      windows_packages: ${{ inputs.windows_packages }}
+      nsis_min_updater: ${{ inputs.nsis_min_updater }}
       artifact_ids: ${{ needs.staging-macos-arm64.outputs.package_artifact_id }},${{ needs.staging-macos-x64.outputs.package_artifact_id }},${{ needs.staging-windows.outputs.package_artifact_id }}
     secrets: inherit
 
@@ -144,6 +161,8 @@ jobs:
       SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
       CHANNEL: staging
       WINDOWS_SIGNING: ${{ inputs.windows_signing }}
+      WINDOWS_PACKAGES: ${{ inputs.windows_packages }}
+      NSIS_MIN_UPDATER: ${{ inputs.nsis_min_updater }}
       CANDIDATE_SHA256: ${{ needs.staging-candidate.outputs.sha256 }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -201,6 +220,7 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: production
       signing: true
+      nsis: ${{ inputs.windows_packages == 'msi,nsis' }}
       backend_artifact_id: ${{ needs.staging-windows.outputs.backend_artifact_id }}
     secrets: inherit
 
@@ -227,6 +247,8 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       channel: production
       platforms: ${{ needs.validate.outputs.production_platforms }}
+      windows_packages: ${{ needs.validate.outputs.production_windows_packages }}
+      nsis_min_updater: ${{ needs.validate.outputs.production_nsis_min_updater }}
       artifact_ids: ${{ needs.production-macos-arm64.outputs.package_artifact_id }},${{ needs.production-macos-x64.outputs.package_artifact_id }},${{ inputs.windows_signing == 'signed' && format('{0},', needs.production-windows.outputs.package_artifact_id) || '' }}${{ needs.linux.outputs.package_artifact_ids }}
     secrets: inherit
 
@@ -248,6 +270,8 @@ jobs:
       SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
       CHANNEL: production
       RELEASE_PLATFORMS: ${{ needs.validate.outputs.production_platforms }}
+      WINDOWS_PACKAGES: ${{ needs.validate.outputs.production_windows_packages }}
+      NSIS_MIN_UPDATER: ${{ needs.validate.outputs.production_nsis_min_updater }}
       CANDIDATE_SHA256: ${{ needs.production-candidate.outputs.sha256 }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

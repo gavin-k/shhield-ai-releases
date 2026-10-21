@@ -17,11 +17,11 @@ for (const name of ['candidate.json', 'update.json', 'latest-mac.yml', ...aliase
 }
 const prefix = updatePrefix(identity);
 const artifacts = [];
-for (const [name, id, platform, arch, format, minimum_os] of requiredPackages(identity)) {
+for (const [name, id, platform, arch, format, minimum_os, package_type, min_updater] of requiredPackages(identity)) {
   const file = path.join(directory, name);
   const stat = await fs.lstat(file);
   assert.ok(stat.isFile() && stat.size > 0, `invalid package ${name}`);
-  artifacts.push({ id, platform, arch, format, minimum_os, name, size: stat.size, sha256: await sha256(file), url: prefix + name });
+  artifacts.push({ id, platform, arch, format, minimum_os, package_type, min_updater, name, size: stat.size, sha256: await sha256(file), url: prefix + name });
 }
 const releaseDate = new Date().toISOString();
 const macFiles = [];

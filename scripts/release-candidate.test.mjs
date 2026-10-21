@@ -6,7 +6,7 @@ import fsSync from 'node:fs';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
-import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend, offeredPlatforms } from './release-candidate.mjs';
+import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend, offeredPlatforms, scopeFromEnvironment } from './release-candidate.mjs';
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-candidate-'));
 const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repeat(40),
@@ -21,9 +21,16 @@ try {
     await assert.rejects(createCandidate(directory, identity), /Non-release|Unexpected Portable/);
     await fs.unlink(path.join(directory, name));
   }
+  // An MSI-only release never accepts an executable, even one named like the NSIS setup.
+  for (const name of ['Shhield-AI-1.2.3-windows-x64-setup.exe', 'Shhield-AI-1.2.3-windows-x64-setup.exe.sha256', 'Shhield-AI-1.2.3-windows-x64.exe']) {
+    await fs.writeFile(path.join(directory, name), 'unexpected executable');
+    await assert.rejects(createCandidate(directory, identity), /Unexpected executable/);
+    await fs.unlink(path.join(directory, name));
+  }
   const candidate = await createCandidate(directory, identity);
   await verifyCandidate(directory, identity);
   assert.deepEqual(websiteManifest(candidate).artifacts.map(file => file.id), ['windows-msi', 'macos-arm64', 'macos-x64']);
+  assert.deepEqual(websiteManifest(candidate).artifacts.map(file => [file.package_type, file.min_updater]), [['msi', '1.0.0'], ['zip', '1.0.0'], ['zip', '1.0.0']]);
   assert.throws(() => websiteManifest({ ...candidate, channel: 'staging' }));
   const originalExec = childProcess.execFileSync;
   const originalFetch = globalThis.fetch;
@@ -145,6 +152,48 @@ try {
   await verifyCandidate(unsignedDirectory, unsignedIdentity);
   await assert.rejects(verifyCandidate(unsignedDirectory, { ...unsignedIdentity, windows_signing: 'signed' }), /Wrong windows_signing/);
 
+  // The NSIS setup is opt-in next to the MSI and must name the oldest updater able to install it.
+  assert.throws(() => validateIdentity({ ...identity, windows_packages: 'nsis' }), /msi or msi,nsis/);
+  assert.throws(() => validateIdentity({ ...identity, windows_packages: 'msi,nsis' }), /nsis_min_updater/);
+  assert.throws(() => validateIdentity({ ...identity, windows_packages: 'msi,nsis', nsis_min_updater: '1.1' }), /nsis_min_updater/);
+  assert.throws(() => validateIdentity({ ...identity, windows_packages: 'msi', nsis_min_updater: '1.1.0' }), /only applies to NSIS/);
+  assert.throws(() => validateIdentity({ ...identity, platforms: 'linux,macos', windows_packages: 'msi,nsis', nsis_min_updater: '1.1.0' }), /requires Windows/);
+  assert.deepEqual(scopeFromEnvironment({ WINDOWS_PACKAGES: 'msi,nsis', NSIS_MIN_UPDATER: '1.1.0', WINDOWS_SIGNING: 'unsigned' }),
+    { windows_signing: 'unsigned', windows_packages: 'msi,nsis', nsis_min_updater: '1.1.0' });
+  const nsisIdentity = { ...identity, windows_packages: 'msi,nsis', nsis_min_updater: '1.1.0' };
+  const nsisDirectory = path.join(directory, 'production-nsis');
+  await fs.mkdir(nsisDirectory);
+  const nsisSetup = 'Shhield-AI-1.2.3-windows-x64-setup.exe';
+  for (const name of ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak']) {
+    await fs.writeFile(path.join(nsisDirectory, name), name);
+  }
+  await assert.rejects(createCandidate(nsisDirectory, nsisIdentity), /Missing Shhield-AI-1\.2\.3-windows-x64-setup\.exe/);
+  await fs.writeFile(path.join(nsisDirectory, nsisSetup), nsisSetup);
+  await fs.writeFile(path.join(nsisDirectory, `${nsisSetup}.sha256`), nsisSetup);
+  for (const name of ['Shhield-AI-1.2.3-windows-x64-setup-unsigned.exe', 'Shhield-AI-1.2.4-windows-x64-setup.exe', 'Shhield-AI-1.2.3-windows-x64.exe']) {
+    await fs.writeFile(path.join(nsisDirectory, name), 'unexpected executable');
+    await assert.rejects(createCandidate(nsisDirectory, nsisIdentity), /Unexpected executable|Non-release/);
+    await fs.unlink(path.join(nsisDirectory, name));
+  }
+  const nsisCandidate = await createCandidate(nsisDirectory, nsisIdentity);
+  await verifyCandidate(nsisDirectory, nsisIdentity);
+  await assert.rejects(verifyCandidate(nsisDirectory, { ...nsisIdentity, windows_packages: 'msi' }), /Wrong windows_packages/);
+  await assert.rejects(verifyCandidate(nsisDirectory, { ...nsisIdentity, nsis_min_updater: '1.2.0' }), /Wrong nsis_min_updater/);
+  assert.deepEqual(websiteManifest(nsisCandidate).artifacts.map(file => [file.id, file.format, file.package_type, file.min_updater]),
+    [['windows-msi', 'msi', 'msi', '1.0.0'], ['windows-nsis', 'exe', 'nsis', '1.1.0'], ['macos-arm64', 'zip', 'zip', '1.0.0'], ['macos-x64', 'zip', 'zip', '1.0.0']]);
+  assert.deepEqual(offeredPlatforms(nsisCandidate.files.map(file => file.name)), ['linux', 'macos', 'windows']);
+  // Unsigned staging testers get an unsigned NSIS setup next to the unsigned MSI, never a signed-named one.
+  const unsignedNsisDirectory = path.join(directory, 'unsigned-staging-nsis');
+  await fs.mkdir(unsignedNsisDirectory);
+  const unsignedSetup = 'Shhield-AI-Staging-1.2.3-windows-x64-setup-unsigned.exe';
+  for (const name of [unsignedMsi, `${unsignedMsi}.sha256`, unsignedSetup, `${unsignedSetup}.sha256`, 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+    await fs.writeFile(path.join(unsignedNsisDirectory, name), name);
+  }
+  const unsignedNsisIdentity = { ...unsignedIdentity, windows_packages: 'msi,nsis', nsis_min_updater: '1.1.0' };
+  await assert.rejects(createCandidate(unsignedNsisDirectory, unsignedIdentity), /Unexpected executable/);
+  await createCandidate(unsignedNsisDirectory, unsignedNsisIdentity);
+  await verifyCandidate(unsignedNsisDirectory, unsignedNsisIdentity);
+
   // Production can ship without Windows, but never with a stray Windows file.
   const withoutWindows = path.join(directory, 'production-without-windows');
   await fs.mkdir(withoutWindows);
@@ -177,7 +226,7 @@ try {
     process.env = savedEnv;
     process.argv = savedArgv;
   }
-  console.log('Candidate integrity, approval gates, backend identity, original-byte publication, safe retries, website contract and Windows scope checks passed');
+  console.log('Candidate integrity, approval gates, backend identity, original-byte publication, safe retries, website contract, Windows scope and NSIS package checks passed');
 } finally {
   await fs.rm(directory, { recursive: true, force: true });
 }

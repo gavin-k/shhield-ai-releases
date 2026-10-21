@@ -22,4 +22,7 @@ main-only deployment rules and disabled administrator bypass. If publication or 
 download check fails, rerun only the failed job; do not rebuild an accepted candidate.
 For an existing candidate, run **Publish signed staging** on `main` with its original
 Release run ID. This uses the same publisher and preserves the frozen packages.
-Windows distribution is MSI-only. Checkout activation is a separate business decision.
+Windows always ships the MSI. A release may additionally opt into the NSIS setup
+(`windows_packages: msi,nsis`); it must then state `nsis_min_updater`, the oldest desktop
+version whose updater can install an NSIS package, because older clients keep selecting the
+MSI. Checkout activation is a separate business decision.
