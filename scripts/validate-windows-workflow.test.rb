@@ -32,4 +32,14 @@ raise 'OIDC environment changed' unless job.fetch('environment') == "${{ inputs.
 raise 'Signature verification missing' unless job.fetch('steps').any? { |step| step['name'] == 'Verify signatures' && step.fetch('run').include?('Get-AuthenticodeSignature') }
 raise 'Portable packaging is no longer supported' if job.fetch('steps').any? { |step| step['name']&.match?(/Portable/i) }
 
-puts 'Windows-only signed staging, source guards, OIDC and MSI-only packaging verified'
+steps = job.fetch('steps')
+smoke = steps.find { |step| step['name'] == 'Smoke NSIS lifecycle' }
+raise 'NSIS lifecycle signature gate missing' unless smoke && smoke.fetch('if') == '${{ inputs.nsis }}'
+raise 'NSIS signature policy must follow signing input' unless smoke.dig('env', 'SIGNING') == '${{ inputs.signing }}'
+raise 'Signed NSIS must verify the installed uninstaller' unless smoke.fetch('run').include?('-RequireSignedUninstaller:($env:SIGNING -eq \'true\')')
+raise 'Signature failure must block the job' if smoke['continue-on-error'] || job['continue-on-error']
+upload = steps.find { |step| step['name'] == 'Upload Windows build' }
+raise 'Package upload must follow successful NSIS smoke' unless steps.index(upload) > steps.index(smoke) && !upload.key?('if')
+
+puts 'Windows source guards, OIDC, MSI compatibility and NSIS installed signature gate verified'
+
