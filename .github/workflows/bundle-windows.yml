@@ -414,6 +414,7 @@ jobs:
         timeout-minutes: 60
         shell: pwsh
         env:
+          SIGNING: ${{ inputs.signing }}
           NSIS_CHANNEL: ${{ inputs.channel == 'staging' && 'staging' || 'stable' }}
         run: |
           ./scripts/verify-windows-nsis.ps1 `
@@ -423,6 +424,7 @@ jobs:
             -UpgradeVersion '${{ steps.nsis-hook.outputs.version }}' `
             -Channel "$env:NSIS_CHANNEL" `
             -BaselineMsiPath '${{ steps.baseline.outputs.path }}' `
+            -RequireSignedUninstaller:($env:SIGNING -eq 'true') `
             -ReportDirectory "$env:RUNNER_TEMP\nsis-report"
 
       - name: Upload NSIS smoke report
@@ -445,3 +447,4 @@ jobs:
             windows-artifacts/*.exe
             windows-artifacts/*.sha256
           if-no-files-found: error
+
