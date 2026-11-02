@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCandidate, sha256 } from './release-candidate.mjs';
+import { createCandidate, requiredPackages, sha256 } from './release-candidate.mjs';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-staging-publish-'));
 const cli = fileURLToPath(new URL('./publish-staging.mjs', import.meta.url));
@@ -13,8 +13,7 @@ const store = path.join(root, 'store');
 const identity = { version: '1.2.3', channel: 'staging', source_sha: 'a'.repeat(40), workflow_sha: 'b'.repeat(40), run_id: '123', run_attempt: '1' };
 async function prepare(id) {
   const directory = await fs.mkdtemp(path.join(root, 'candidate-'));
-  const label = id.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-  for (const name of [`${label}-${id.version}-windows-x64.msi`, `${label}-${id.version}-macos-arm64.zip`, `${label}-${id.version}-macos-x64.zip`]) {
+  for (const [name] of requiredPackages(id)) {
     await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
   }
   if (id.channel === 'production') for (const name of ['app.deb', 'app.rpm', 'app.flatpak']) await fs.writeFile(path.join(directory, name), name);
@@ -86,6 +85,17 @@ try {
   assert.notEqual(publish(first, occupied).status, 0, 'never overwrite a conflicting immutable release');
   assert.equal(await fs.readFile(path.join(occupiedRelease, 'candidate.json'), 'utf8'), 'do not replace');
   await assert.rejects(fs.lstat(path.join(occupied, 'current')), { code: 'ENOENT' });
+  // The first versioned release lands on a store whose current candidate still uses the fixed macOS names.
+  const upgraded = path.join(root, 'upgraded');
+  await fs.mkdir(upgraded);
+  const legacy = await prepare({ ...identity, version: '1.0.15' });
+  assert.ok(legacy.directory && (await fs.readdir(legacy.directory)).includes('Shhield.zip'), 'fixture must use the fixed macOS names');
+  assert.equal(publish(legacy, upgraded).status, 0);
+  const versioned = await prepare({ ...identity, version: '1.0.16', run_id: '125' });
+  const upgradeResult = publish(versioned, upgraded);
+  assert.equal(upgradeResult.status, 0, upgradeResult.stderr);
+  assert.equal(await sha256(path.join(upgraded, 'current/candidate.json')), versioned.env.CANDIDATE_SHA256);
+  assert.equal(await fs.readFile(path.join(upgraded, 'current/Shhield-AI-Staging-1.0.16-macos-arm64.zip'), 'utf8'), 'synthetic Shhield-AI-Staging-1.0.16-macos-arm64.zip');
   console.log('PASS staged publication, digest/channel/hash rejection, interrupted switch recovery, anti-rollback and path containment');
 } finally {
   await fs.rm(root, { recursive: true, force: true });
