@@ -45,9 +45,10 @@ export function scopeFromEnvironment(env = process.env) {
 }
 
 // Download links and update feeds follow the latest release, so a new one must not drop a platform.
+// Releases before 1.0.16 published the macOS package as Shhield.zip.
 export function offeredPlatforms(names) {
   return PLATFORMS.filter(platform => names.some(name => platform === 'windows' ? name.endsWith('.msi')
-    : platform === 'macos' ? name === 'Shhield.zip' : LINUX_SUFFIXES.some(suffix => name.endsWith(suffix))));
+    : platform === 'macos' ? name.endsWith('-macos-arm64.zip') || name === 'Shhield.zip' : LINUX_SUFFIXES.some(suffix => name.endsWith(suffix))));
 }
 
 export async function sha256(file) {
@@ -64,8 +65,8 @@ export function requiredPackages(identity) {
     // Windows ships only an MSI; unsigned packages are restricted to staging testers.
     packages.push([`${label}-${identity.version}-windows-x64${unsignedWindows ? '-unsigned' : ''}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11']);
   }
-  packages.push(['Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
-    ['Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
+  packages.push([`${label}-${identity.version}-macos-arm64.zip`, 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
+    [`${label}-${identity.version}-macos-x64.zip`, 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
   return packages;
 }
 

@@ -311,8 +311,10 @@ jobs:
             app_name='Shhield AI Staging'
             out=out-staging
           fi
-          archive=Shhield.zip
-          if [[ "$ARCH" == x64 ]]; then archive=Shhield_intel_mac.zip; fi
+          label=Shhield-AI
+          if [[ "$SHHIELD_LICENSE_CHANNEL" == staging ]]; then label=Shhield-AI-Staging; fi
+          # Must agree with ui/desktop/scripts/bundle-macos.sh in the app repository.
+          archive="$label-$VERSION-macos-$ARCH.zip"
           zip="ui/desktop/$out/$app_name-darwin-$ARCH/$archive"
           # stapler validate also looks the ticket up in CloudKit; only its exit code 68 (lookup
           # failed) is retried, so a missing ticket or any other check still fails at once.

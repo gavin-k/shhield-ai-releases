@@ -29,7 +29,7 @@ try {
   const bin = path.join(root, 'bin');
   await fs.mkdir(directory);
   await fs.mkdir(bin);
-  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield-AI-Staging-1.2.3-macos-arm64.zip', 'Shhield-AI-Staging-1.2.3-macos-x64.zip']) {
     await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
   }
   execFileSync(process.execPath, [path.join(scripts, 'generate-update-manifests.mjs'), directory, identity.version, 'staging', identity.source_sha, '123', '1']);

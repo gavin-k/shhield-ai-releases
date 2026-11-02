@@ -14,7 +14,7 @@ const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repe
 try {
   assert.throws(() => validateIdentity({ ...identity, version: '../1' }));
   assert.throws(() => validateIdentity({ ...identity, channel: 'preview' }));
-  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
+  const names = ['Shhield-AI-1.2.3-windows-x64.msi', 'Shhield-AI-1.2.3-macos-arm64.zip', 'Shhield-AI-1.2.3-macos-x64.zip', 'app.deb', 'app.rpm', 'app.flatpak'];
   for (const name of names) await fs.writeFile(path.join(directory, name), `package ${name}`);
   for (const name of ['Shhield-AI-1.2.3-windows-x64-portable.zip', 'Shhield-AI-1.2.3-windows-x64-portable.zip.sha256', 'Shhield-AI-1.2.3-windows-x64-portable-unsigned.zip', 'Shhield-AI-Staging-1.2.3-windows-x64-portable.zip', 'Shhield-AI-1.2.4-windows-x64-portable.zip']) {
     await fs.writeFile(path.join(directory, name), 'unexpected portable');
@@ -94,7 +94,7 @@ try {
     for (const file of candidate.files) assert.deepEqual(assets.get(file.name), await fs.readFile(path.join(directory, file.name)));
     await import('./publish-candidate.mjs?retry');
     assert.equal(uploads, candidate.files.length + 2, 'Retry must not replace/re-upload assets');
-    assets.set('Shhield.zip', Buffer.from('tampered published file'));
+    assets.set('Shhield-AI-1.2.3-macos-arm64.zip', Buffer.from('tampered published file'));
     await assert.rejects(import('./publish-candidate.mjs?conflict'), /Refusing to replace/);
     assert.equal(edits, 2);
     current.tag_name = 'v1.2.4';
@@ -107,14 +107,14 @@ try {
     process.argv = originalArgv;
   }
   await assert.rejects(verifyCandidate(directory, { ...identity, source_sha: 'c'.repeat(40) }));
-  await fs.writeFile(path.join(directory, 'Shhield.zip'), 'package Shhield.ziq');
+  await fs.writeFile(path.join(directory, 'Shhield-AI-1.2.3-macos-arm64.zip'), 'package Shhield-AI-1.2.3-macos-arm64.ziq');
   await assert.rejects(verifyCandidate(directory, identity), /Wrong SHA-256/);
-  await fs.writeFile(path.join(directory, 'Shhield.zip'), 'package Shhield.zip');
+  await fs.writeFile(path.join(directory, 'Shhield-AI-1.2.3-macos-arm64.zip'), 'package Shhield-AI-1.2.3-macos-arm64.zip');
   await fs.writeFile(path.join(directory, 'unexpected.zip'), 'extra');
   await assert.rejects(verifyCandidate(directory, identity));
   const stageDirectory = path.join(directory, 'staging');
   await fs.mkdir(stageDirectory);
-  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of ['Shhield-AI-Staging-1.2.3-windows-x64.msi', 'Shhield-AI-Staging-1.2.3-macos-arm64.zip', 'Shhield-AI-Staging-1.2.3-macos-x64.zip']) {
     await fs.writeFile(path.join(stageDirectory, name), name);
   }
   const stageIdentity = { ...identity, channel: 'staging' };
@@ -132,7 +132,7 @@ try {
   const unsignedDirectory = path.join(directory, 'unsigned-staging');
   await fs.mkdir(unsignedDirectory);
   const unsignedMsi = 'Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi';
-  for (const name of [unsignedMsi, `${unsignedMsi}.sha256`, 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of [unsignedMsi, `${unsignedMsi}.sha256`, 'Shhield-AI-Staging-1.2.3-macos-arm64.zip', 'Shhield-AI-Staging-1.2.3-macos-x64.zip']) {
     await fs.writeFile(path.join(unsignedDirectory, name), name);
   }
   const unsignedIdentity = { ...stageIdentity, windows_signing: 'unsigned' };
@@ -148,7 +148,7 @@ try {
   // Production can ship without Windows, but never with a stray Windows file.
   const withoutWindows = path.join(directory, 'production-without-windows');
   await fs.mkdir(withoutWindows);
-  for (const name of ['Shhield.zip', 'Shhield_intel_mac.zip', 'app.deb', 'app.rpm', 'app.flatpak']) {
+  for (const name of ['Shhield-AI-1.2.3-macos-arm64.zip', 'Shhield-AI-1.2.3-macos-x64.zip', 'app.deb', 'app.rpm', 'app.flatpak']) {
     await fs.writeFile(path.join(withoutWindows, name), name);
   }
   const withoutWindowsIdentity = { ...identity, platforms: 'linux,macos' };
