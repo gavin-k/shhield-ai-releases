@@ -57,16 +57,29 @@ export async function sha256(file) {
   return hash.digest('hex');
 }
 
+// Publishing re-verifies the currently published candidate, so frozen candidates from before 1.0.16 must
+// still validate against the fixed macOS names they were built with.
+const VERSIONED_MACOS_SINCE = [1, 0, 16];
+
+function versionedMacos(version) {
+  const parts = version.split('.').map(Number);
+  for (const [index, floor] of VERSIONED_MACOS_SINCE.entries()) {
+    if (parts[index] !== floor) return parts[index] > floor;
+  }
+  return true;
+}
+
 export function requiredPackages(identity) {
   const label = identity.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
+  const versioned = versionedMacos(identity.version);
   const { platforms, unsignedWindows } = releaseScope(identity);
   const packages = [];
   if (platforms.includes('windows')) {
     // Windows ships only an MSI; unsigned packages are restricted to staging testers.
     packages.push([`${label}-${identity.version}-windows-x64${unsignedWindows ? '-unsigned' : ''}.msi`, 'windows-msi', 'windows', 'x64', 'msi', 'Windows 11']);
   }
-  packages.push([`${label}-${identity.version}-macos-arm64.zip`, 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
-    [`${label}-${identity.version}-macos-x64.zip`, 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
+  packages.push([versioned ? `${label}-${identity.version}-macos-arm64.zip` : 'Shhield.zip', 'macos-arm64', 'macos', 'arm64', 'zip', 'macOS 12'],
+    [versioned ? `${label}-${identity.version}-macos-x64.zip` : 'Shhield_intel_mac.zip', 'macos-x64', 'macos', 'x64', 'zip', 'macOS 12']);
   return packages;
 }
 

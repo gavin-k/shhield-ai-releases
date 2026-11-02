@@ -6,7 +6,7 @@ import fsSync from 'node:fs';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
-import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend, offeredPlatforms } from './release-candidate.mjs';
+import { createCandidate, verifyCandidate, websiteManifest, validateIdentity, checkApprovalGates, checkBackend, offeredPlatforms, requiredPackages } from './release-candidate.mjs';
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-candidate-'));
 const identity = { version: '1.2.3', channel: 'production', source_sha: 'a'.repeat(40),
@@ -159,6 +159,25 @@ try {
   assert.deepEqual(websiteManifest(macCandidate).artifacts.map(file => file.id), ['macos-arm64', 'macos-x64']);
   assert.deepEqual(offeredPlatforms(macCandidate.files.map(file => file.name)), ['linux', 'macos']);
   assert.deepEqual(offeredPlatforms(candidate.files.map(file => file.name)), ['linux', 'macos', 'windows']);
+
+  // Staging publication re-verifies the currently published candidate, which may predate versioned macOS names.
+  const legacyDirectory = path.join(directory, 'legacy-staging');
+  await fs.mkdir(legacyDirectory);
+  const legacyNames = ['Shhield-AI-Staging-1.0.15-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip'];
+  for (const name of legacyNames) await fs.writeFile(path.join(legacyDirectory, name), name);
+  const legacyIdentity = { ...stageIdentity, version: '1.0.15' };
+  assert.deepEqual(requiredPackages(legacyIdentity).map(([name]) => name), legacyNames);
+  assert.deepEqual(requiredPackages({ ...identity, version: '1.0.9' }).map(([name]) => name), ['Shhield-AI-1.0.9-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']);
+  assert.deepEqual(requiredPackages({ ...stageIdentity, version: '1.0.16' }).map(([name]) => name),
+    ['Shhield-AI-Staging-1.0.16-windows-x64.msi', 'Shhield-AI-Staging-1.0.16-macos-arm64.zip', 'Shhield-AI-Staging-1.0.16-macos-x64.zip']);
+  assert.deepEqual(requiredPackages({ ...identity, version: '1.1.0' }).map(([name]) => name), ['Shhield-AI-1.1.0-windows-x64.msi', 'Shhield-AI-1.1.0-macos-arm64.zip', 'Shhield-AI-1.1.0-macos-x64.zip']);
+  const legacyCandidate = await createCandidate(legacyDirectory, legacyIdentity);
+  await verifyCandidate(legacyDirectory, legacyIdentity);
+  assert.deepEqual(offeredPlatforms(legacyCandidate.files.map(file => file.name)), ['macos', 'windows']);
+  const staleDirectory = path.join(directory, 'stale-names-1.0.16');
+  await fs.mkdir(staleDirectory);
+  for (const name of ['Shhield-AI-Staging-1.0.16-windows-x64.msi', 'Shhield.zip', 'Shhield_intel_mac.zip']) await fs.writeFile(path.join(staleDirectory, name), name);
+  await assert.rejects(createCandidate(staleDirectory, { ...stageIdentity, version: '1.0.16' }), /Missing Shhield-AI-Staging-1\.0\.16-macos-arm64\.zip/);
   const savedExec = childProcess.execFileSync;
   const savedEnv = { ...process.env };
   const savedArgv = [...process.argv];
