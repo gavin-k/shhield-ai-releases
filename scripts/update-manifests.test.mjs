@@ -16,7 +16,7 @@ try {
     const directory = path.join(root, channel);
     await fs.mkdir(directory);
     const label = channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-    const files = [`${label}-1.2.3-windows-x64.msi`, 'Shhield.zip', 'Shhield_intel_mac.zip'];
+    const files = [`${label}-1.2.3-windows-x64.msi`, `${label}-1.2.3-macos-arm64.zip`, `${label}-1.2.3-macos-x64.zip`];
     for (const name of files) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
     if (channel === 'production') for (const name of ['app.deb', 'app.rpm', 'app.flatpak']) await fs.writeFile(path.join(directory, name), name);
     const args = [cli, directory, '1.2.3', channel, sha, '123', '1'];
@@ -39,8 +39,8 @@ try {
     const mac = JSON.parse(await fs.readFile(path.join(directory, 'latest-mac.yml'), 'utf8')); // JSON is valid YAML.
     assert.equal(mac.version, '1.2.3');
     assert.deepEqual(mac.files.map(file => file.url), [prefix + 'Shhield-darwin-arm64.zip', prefix + 'Shhield-darwin-x64.zip']);
-    assert.equal(mac.files[0].sha512, createHash('sha512').update('synthetic Shhield.zip').digest('base64'));
-    assert.deepEqual(await fs.readFile(path.join(directory, 'Shhield-darwin-arm64.zip')), await fs.readFile(path.join(directory, 'Shhield.zip')));
+    assert.equal(mac.files[0].sha512, createHash('sha512').update(`synthetic ${label}-1.2.3-macos-arm64.zip`).digest('base64'));
+    assert.deepEqual(await fs.readFile(path.join(directory, 'Shhield-darwin-arm64.zip')), await fs.readFile(path.join(directory, `${label}-1.2.3-macos-arm64.zip`)));
     assert.notEqual(spawnSync(process.execPath, args).status, 0, 'must not overwrite frozen metadata');
     const identity = { version: '1.2.3', channel, source_sha: sha, workflow_sha: 'b'.repeat(40), run_id: '123', run_attempt: '1' };
     const originalFeed = await fs.readFile(path.join(directory, 'update.json'), 'utf8');
@@ -98,9 +98,10 @@ try {
     ['staging', { WINDOWS_SIGNING: 'unsigned' }, ['Shhield-AI-Staging-1.2.3-windows-x64-unsigned.msi'], ['macos-arm64', 'macos-x64', 'windows-msi']],
     ['production', { RELEASE_PLATFORMS: 'linux,macos' }, ['app.deb', 'app.rpm', 'app.flatpak'], ['macos-arm64', 'macos-x64']],
   ]) {
+    const label = channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
     const directory = path.join(root, `scoped-${channel}`);
     await fs.mkdir(directory);
-    for (const name of [...files, 'Shhield.zip', 'Shhield_intel_mac.zip']) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
+    for (const name of [...files, `${label}-1.2.3-macos-arm64.zip`, `${label}-1.2.3-macos-x64.zip`]) await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
     execFileSync(process.execPath, [cli, directory, '1.2.3', channel, sha, '123', '1'], { env: { ...process.env, ...env } });
     const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));
     assert.deepEqual(feed.artifacts.map(file => file.id).sort(), ids);

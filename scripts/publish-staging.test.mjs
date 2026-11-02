@@ -14,7 +14,7 @@ const identity = { version: '1.2.3', channel: 'staging', source_sha: 'a'.repeat(
 async function prepare(id) {
   const directory = await fs.mkdtemp(path.join(root, 'candidate-'));
   const label = id.channel === 'staging' ? 'Shhield-AI-Staging' : 'Shhield-AI';
-  for (const name of [`${label}-${id.version}-windows-x64.msi`, 'Shhield.zip', 'Shhield_intel_mac.zip']) {
+  for (const name of [`${label}-${id.version}-windows-x64.msi`, `${label}-${id.version}-macos-arm64.zip`, `${label}-${id.version}-macos-x64.zip`]) {
     await fs.writeFile(path.join(directory, name), `synthetic ${name}`);
   }
   if (id.channel === 'production') for (const name of ['app.deb', 'app.rpm', 'app.flatpak']) await fs.writeFile(path.join(directory, name), name);
@@ -34,7 +34,7 @@ try {
   }
   assert.equal(JSON.parse(await fs.readFile(path.join(store, 'current/update.json'), 'utf8')).channel, 'staging');
   assert.equal(await sha256(path.join(store, 'current/candidate.json')), first.env.CANDIDATE_SHA256);
-  assert.equal(await fs.readFile(path.join(store, 'current/Shhield.zip'), 'utf8'), 'synthetic Shhield.zip');
+  assert.equal(await fs.readFile(path.join(store, 'current/Shhield-AI-Staging-1.2.3-macos-arm64.zip'), 'utf8'), 'synthetic Shhield-AI-Staging-1.2.3-macos-arm64.zip');
   assert.equal(await fs.readFile(path.join(store, 'current/Shhield-AI-Staging-1.2.3-windows-x64.msi'), 'utf8'), 'synthetic Shhield-AI-Staging-1.2.3-windows-x64.msi');
   assert.equal(publish(first).status, 0, 'identical retry is idempotent');
   const stillFirst = async () => assert.equal(await sha256(path.join(store, 'current/candidate.json')), first.env.CANDIDATE_SHA256);
@@ -51,10 +51,10 @@ try {
   assert.notEqual(sameVersion.status, 0);
   assert.match(sameVersion.stderr, /newer version/);
   await stillFirst();
-  await fs.appendFile(path.join(next.directory, 'Shhield.zip'), 'tampered');
+  await fs.appendFile(path.join(next.directory, 'Shhield-AI-Staging-1.2.4-macos-arm64.zip'), 'tampered');
   assert.notEqual(publish(next).status, 0, 'package tampering must not change the current feed');
   await stillFirst();
-  await fs.writeFile(path.join(next.directory, 'Shhield.zip'), 'synthetic Shhield.zip');
+  await fs.writeFile(path.join(next.directory, 'Shhield-AI-Staging-1.2.4-macos-arm64.zip'), 'synthetic Shhield-AI-Staging-1.2.4-macos-arm64.zip');
   const diskFull = `import fs from 'node:fs/promises'; fs.copyFile = async () => { throw Object.assign(new Error('simulated disk full'), { code: 'ENOSPC' }); };`;
   const failedCopy = spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(diskFull)}`, cli, next.directory, store], { env: next.env, encoding: 'utf8' });
   assert.notEqual(failedCopy.status, 0);
