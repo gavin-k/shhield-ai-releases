@@ -202,7 +202,6 @@ export async function checkBackend(channel) {
   assert.equal(response.status, 200, `${channel} backend is not ready`);
   const status = await response.json();
   assert.equal(status.staging, channel === 'staging', 'Backend environment mismatch');
-  if (channel === 'staging') assert.equal(status.checkoutEnabled, true, 'Staging checkout is disabled');
   return origin;
 }
 

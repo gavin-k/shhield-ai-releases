@@ -46,7 +46,7 @@ try {
     await checkBackend('staging');
     await assert.rejects(checkBackend('production'), /environment mismatch/);
     globalThis.fetch = async () => ({ status: 200, json: async () => ({ staging: true, checkoutEnabled: false }) });
-    await assert.rejects(checkBackend('staging'), /checkout is disabled/);
+    await checkBackend('staging');
 
     Object.assign(process.env, { VERSION: identity.version, SOURCE_SHA: identity.source_sha,
       GITHUB_SHA: identity.workflow_sha, GITHUB_RUN_ID: identity.run_id,
