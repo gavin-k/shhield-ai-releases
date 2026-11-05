@@ -18,7 +18,12 @@ const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 
 function release(ref) {
   try { return JSON.parse(gh('api', `repos/${repository}/releases/${ref}`)); }
   catch (error) {
-    if (String(error.stderr).includes('(HTTP 404)')) return null;
+    if (String(error.stderr).includes('(HTTP 404)')) {
+      if (!ref.startsWith('tags/')) return null;
+      // The tag endpoint can omit drafts; reuse them from the authenticated release list.
+      const pages = JSON.parse(gh('api', `repos/${repository}/releases?per_page=100`, '--paginate', '--slurp'));
+      return pages.flat().find(item => item.tag_name === ref.slice(5)) ?? null;
+    }
     throw error;
   }
 }

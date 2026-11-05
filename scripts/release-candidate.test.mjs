@@ -57,21 +57,33 @@ try {
     let edits = 0;
     let uploads = 0;
     let failUpload = true;
+    let apiError = false;
+    let creates = 0;
+    let lists = 0;
     const snapshot = () => ({ ...current, assets: [...assets].map(([name, data]) => ({ name, size: data.length,
       digest: `sha256:${createHash('sha256').update(data).digest('hex')}` })) });
     childProcess.execFileSync = (command, args) => {
       assert.equal(command, 'gh');
       const [kind, operation] = args;
       if (kind === 'api') {
-        if (!current || (operation.endsWith('/latest') && current.draft)) {
+        if (apiError) throw Object.assign(new Error('GitHub unavailable (HTTP 503)'), { stderr: '(HTTP 503)' });
+        if (operation.endsWith('/releases?per_page=100')) {
+          assert.ok(args.includes('--paginate') && args.includes('--slurp'));
+          lists++;
+          return JSON.stringify([[], current ? [snapshot()] : []]);
+        }
+        if (!current || (current.draft && (operation.endsWith('/latest') || operation.includes('/tags/')))) {
           throw Object.assign(new Error('not found'), { stderr: '(HTTP 404)' });
         }
         return JSON.stringify(snapshot());
       }
       assert.equal(kind, 'release');
-      if (operation === 'create') current = { tag_name: 'v1.2.3', created_at: '2026-09-28T00:00:00Z', draft: true, prerelease: false,
+      if (operation === 'create') {
+        assert.equal(current, null, 'Do not create a duplicate draft');
+        creates++;
+        current = { tag_name: 'v1.2.3', created_at: '2026-09-28T00:00:00Z', draft: true, prerelease: false,
         html_url: 'https://example.invalid/mock-release' };
-      else if (operation === 'upload') {
+      } else if (operation === 'upload') {
         if (failUpload && uploads === 2) throw new Error('simulated interrupted upload');
         assets.set(path.basename(args[3]), fsSync.readFileSync(args[3]));
         uploads++;
@@ -84,12 +96,19 @@ try {
     };
     syncBuiltinESMExports();
     globalThis.fetch = async () => ({ status: 200, json: async () => JSON.parse(assets.get('latest.json')) });
+    apiError = true;
+    await assert.rejects(import('./publish-candidate.mjs?api-error'), /HTTP 503/);
+    assert.equal(lists, 0, 'Non-404 errors must not trigger draft lookup');
+    assert.equal(creates, 0);
+    apiError = false;
     await assert.rejects(import('./publish-candidate.mjs?interrupted'), /simulated interrupted upload/);
     assert.equal(current.draft, true);
     assert.equal(edits, 0);
     failUpload = false;
     await import('./publish-candidate.mjs?resume');
     assert.equal(edits, 1);
+    assert.equal(creates, 1, 'Resume must reuse the existing draft');
+    assert.ok(lists > 0, 'Drafts must be found beyond the first release page');
     assert.equal(uploads, candidate.files.length + 2);
     for (const file of candidate.files) assert.deepEqual(assets.get(file.name), await fs.readFile(path.join(directory, file.name)));
     await import('./publish-candidate.mjs?retry');
