@@ -90,7 +90,11 @@ try {
       } else if (operation === 'download') {
         const name = args[args.indexOf('--pattern') + 1];
         fsSync.writeFileSync(path.join(args[args.indexOf('--dir') + 1], name), assets.get(name));
-      } else if (operation === 'edit') { current.draft = false; edits++; }
+      } else if (operation === 'edit') {
+        current.draft = false;
+        current.created_at = '2026-09-27T00:00:00Z';
+        edits++;
+      }
       else assert.fail(`Unexpected gh command: ${args.join(' ')}`);
       return '';
     };
@@ -111,8 +115,18 @@ try {
     assert.ok(lists > 0, 'Drafts must be found beyond the first release page');
     assert.equal(uploads, candidate.files.length + 2);
     for (const file of candidate.files) assert.deepEqual(assets.get(file.name), await fs.readFile(path.join(directory, file.name)));
+    const legacyManifest = JSON.parse(assets.get('latest.json'));
+    legacyManifest.published_at = '2026-09-28T00:00:00Z';
+    const frozenManifest = Buffer.from(JSON.stringify(legacyManifest, null, 2) + '\n');
+    assets.set('latest.json', frozenManifest);
     await import('./publish-candidate.mjs?retry');
+    assert.deepEqual(assets.get('latest.json'), frozenManifest, 'Retry must preserve the published manifest bytes');
     assert.equal(uploads, candidate.files.length + 2, 'Retry must not replace/re-upload assets');
+    const badManifest = JSON.parse(frozenManifest);
+    badManifest.artifacts[0].sha256 = '0'.repeat(64);
+    assets.set('latest.json', Buffer.from(JSON.stringify(badManifest)));
+    await assert.rejects(import('./publish-candidate.mjs?manifest-conflict'), /Published manifest differs/);
+    assets.set('latest.json', frozenManifest);
     assets.set('Shhield-AI-1.2.3-macos-arm64.zip', Buffer.from('tampered published file'));
     await assert.rejects(import('./publish-candidate.mjs?conflict'), /Refusing to replace/);
     assert.equal(edits, 2);

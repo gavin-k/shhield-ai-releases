@@ -53,9 +53,17 @@ if (!current) {
 assert.ok(current && !current.prerelease, 'Unexpected prerelease at final version tag');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-publish-'));
 try {
-  const publishedAt = current.created_at;
+  let publishedAt = candidate.created_at;
   const manifestFile = path.join(temporary, 'latest.json');
-  await fs.writeFile(manifestFile, JSON.stringify(websiteManifest(candidate, publishedAt), null, 2) + '\n');
+  if (current.assets.some(asset => asset.name === 'latest.json')) {
+    gh('release', 'download', tag, '--repo', repository, '--pattern', 'latest.json', '--dir', temporary);
+    const frozen = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+    assert.ok(typeof frozen.published_at === 'string' && Number.isFinite(Date.parse(frozen.published_at)), 'Invalid published timestamp');
+    assert.deepEqual(frozen, websiteManifest(candidate, frozen.published_at), 'Published manifest differs from the approved candidate');
+    publishedAt = frozen.published_at;
+  } else {
+    await fs.writeFile(manifestFile, JSON.stringify(websiteManifest(candidate, publishedAt), null, 2) + '\n');
+  }
   const files = [...candidate.files.map(file => path.join(directory, file.name)), path.join(directory, 'candidate.json'), manifestFile];
   const expectedNames = files.map(file => path.basename(file));
   assert.ok(current.assets.every(asset => expectedNames.includes(asset.name)), 'Release contains unexpected assets');
