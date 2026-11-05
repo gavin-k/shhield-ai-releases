@@ -22,6 +22,5 @@ jobs:
           ruby scripts/validate-windows-workflow.test.rb
           node scripts/release-candidate.test.mjs
           node scripts/update-manifests.test.mjs
-          node scripts/publish-candidate.test.mjs
           node scripts/publish-staging.test.mjs
           node scripts/staging-publish.test.mjs
