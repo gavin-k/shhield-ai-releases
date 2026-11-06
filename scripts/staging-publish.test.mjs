@@ -15,6 +15,11 @@ const run = { id: 123, run_attempt: 2, repository: { full_name: repository }, he
   path: '.github/workflows/release.yml', head_sha: identity.workflow_sha, display_title: `Release v1.2.3 from ${identity.source_sha}` };
 const artifact = { id: 456, name: 'candidate-staging-123-1', expired: false };
 assert.equal(selectCandidate(run, [artifact]).artifact_id, '456', 'A waiting release may publish its completed candidate');
+const productionArtifact = { ...artifact, id: 789, name: 'candidate-production-123-1' };
+assert.equal(selectCandidate(run, [artifact, productionArtifact], 'production').artifact_id, '789');
+assert.equal(selectCandidate(run, [artifact, productionArtifact]).artifact_id, '456');
+assert.throws(() => selectCandidate(run, [artifact], 'production'), /No frozen production/);
+assert.throws(() => selectCandidate(run, [artifact], 'untrusted'), /Invalid candidate channel/);
 for (const field of ['head_branch', 'event', 'path', 'head_sha', 'display_title']) {
   assert.throws(() => selectCandidate({ ...run, [field]: 'untrusted' }, [artifact]));
 }

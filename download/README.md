@@ -47,6 +47,10 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 
 ## 迁移顺序
 
+受保护的执行入口是 **Initialize update mirrors**（`bootstrap-mirrors.yml`），仅允许 `main`，与日常发布共用渠道并发锁。输入当前版本的原 Release run ID 和 `staging` / `production`；它复用原候选 artifact，核对原 run、attestation 和全部文件哈希，不重新打包。
+
+先用 `mode=probe` 向 CNB 上传候选中已经公开的 `update.json`，验证匿名下载字节并输出精确上传/下载 origins；结果 artifact 仅包含仓库和 origins，不包含令牌、签名 URL、源码或内部验收记录。探测不会推进渠道指针。将实测结果写入两侧变量与客户端策略后，用 `mode=bootstrap` 分别初始化两个当前渠道。production 仍经过 `release` 环境审批，既有审批规则保持有效。
+
 1. 完成账户与域名核验，把实际 CNB 仓库/下载 origin 写入客户端策略，核对两侧配置；不要提交凭据。
 2. 审核 `wrangler.jsonc` 中的账户与 R2 binding，先发布到 `workers.dev` 预览域名，不挂载线上路由。此步已完成，部署证据见下文。R2 的对象访问凭据不能替代 Worker 部署授权。
 3. 暂停新版本发布并保存当前路由、GitHub latest、staging PVC `current` 及原清单字节。分别取得两个渠道当前已公布版本的原冻结候选，核对来源、attestation 和候选哈希；不是重新构建当前版本。

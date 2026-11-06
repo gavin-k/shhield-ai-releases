@@ -7,7 +7,8 @@ import { sha256, verifyCandidate } from './release-candidate.mjs';
 
 const repository = 'gavin-k/shhield-ai-releases';
 const origin = `https://github.com/${repository}`;
-export function selectCandidate(run, artifacts) {
+export function selectCandidate(run, artifacts, channel = 'staging') {
+  assert.ok(['staging', 'production'].includes(channel), 'Invalid candidate channel');
   assert.equal(run.repository.full_name, repository);
   assert.equal(run.head_branch, 'main', 'Release must originate on main');
   assert.equal(run.event, 'workflow_dispatch');
@@ -15,9 +16,9 @@ export function selectCandidate(run, artifacts) {
   assert.match(run.head_sha, /^[a-f0-9]{40}$/);
   const title = /^Release v(\d+\.\d+\.\d+) from ([a-f0-9]{40})$/.exec(run.display_title);
   assert.ok(title, 'Unexpected release identity');
-  const candidates = artifacts.filter(artifact => new RegExp(`^candidate-staging-${run.id}-[1-9]\\d*$`).test(artifact.name));
+  const candidates = artifacts.filter(artifact => new RegExp(`^candidate-${channel}-${run.id}-[1-9]\\d*$`).test(artifact.name));
   candidates.sort((a, b) => Number(b.name.split('-').at(-1)) - Number(a.name.split('-').at(-1)));
-  assert.ok(candidates.length, 'No frozen staging candidate');
+  assert.ok(candidates.length, `No frozen ${channel} candidate`);
   const artifact = candidates[0];
   const attempt = artifact.name.split('-').at(-1);
   assert.equal(candidates.filter(item => item.name === artifact.name).length, 1, 'Ambiguous candidate artifact');
@@ -47,29 +48,30 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   assert.equal(process.env.GITHUB_REPOSITORY, repository);
   assert.equal(process.env.GITHUB_REF, 'refs/heads/main');
   if (command === 'select') {
-    const [runId, contextFile] = args;
+    const [runId, contextFile, channel = 'staging'] = args;
     assert.match(runId, /^[1-9]\d*$/);
     const get = resource => JSON.parse(execFileSync('gh', ['api', `repos/${repository}/${resource}`], { encoding: 'utf8' }));
     const run = get(`actions/runs/${runId}`);
     const artifacts = get(`actions/runs/${runId}/artifacts?per_page=100`);
     assert.ok(artifacts.total_count <= 100, 'Too many artifacts to select unambiguously');
-    const context = selectCandidate(run, artifacts.artifacts);
+    const context = selectCandidate(run, artifacts.artifacts, channel);
     const jobs = get(`actions/runs/${runId}/attempts/${context.run_attempt}/jobs?per_page=100`);
     assert.ok(jobs.total_count <= 100, 'Too many jobs to verify');
-    assert.ok(jobs.jobs.some(job => job.name === 'staging-candidate / prepare' && job.conclusion === 'success'), 'Candidate preparation must have succeeded');
+    assert.ok(jobs.jobs.some(job => job.name === `${channel}-candidate / prepare` && job.conclusion === 'success'), 'Candidate preparation must have succeeded');
     await fs.writeFile(contextFile, JSON.stringify(context));
     await fs.appendFile(process.env.GITHUB_OUTPUT, `artifact_id=${context.artifact_id}\n`);
   } else if (command === 'verify') {
-    const [contextFile, directory, attestationFile] = args;
+    const [contextFile, directory, attestationFile, channel = 'staging'] = args;
+    assert.ok(['staging', 'production'].includes(channel), 'Invalid candidate channel');
     const context = JSON.parse(await fs.readFile(contextFile, 'utf8'));
     const { artifact_id, ...identity } = context;
-    const candidate = await verifyCandidate(directory, { ...identity, channel: 'staging', windows_signing: 'signed' });
+    const candidate = await verifyCandidate(directory, { ...identity, channel, ...(channel === 'staging' ? { windows_signing: 'signed' } : {}) });
     const digest = await sha256(path.join(directory, 'candidate.json'));
     verifyProvenance(JSON.parse(await fs.readFile(attestationFile, 'utf8')), candidate, digest);
     const output = { version: candidate.version, source_sha: candidate.source_sha, workflow_sha: candidate.workflow_sha,
       run_id: candidate.run_id, run_attempt: candidate.run_attempt, sha256: digest };
     await fs.appendFile(process.env.GITHUB_OUTPUT, Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''));
-    console.log(`Verified signed staging candidate ${candidate.version} from release ${candidate.run_id}/${candidate.run_attempt}: ${digest}`);
+    console.log(`Verified signed ${channel} candidate ${candidate.version} from release ${candidate.run_id}/${candidate.run_attempt}: ${digest}`);
   } else {
     assert.fail('Expected select or verify');
   }

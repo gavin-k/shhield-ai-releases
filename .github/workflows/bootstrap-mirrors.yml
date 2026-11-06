@@ -1,0 +1,98 @@
+name: Initialize update mirrors
+run-name: Mirror ${{ inputs.mode }} for ${{ inputs.channel }} from release ${{ inputs.release_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Probe CNB origins, or copy the current published candidate to both mirrors'
+        type: choice
+        options: [probe, bootstrap]
+        required: true
+      channel:
+        type: choice
+        options: [staging, production]
+        required: true
+      release_run_id:
+        description: 'Original Release run for the currently published version'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+jobs:
+  initialize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.channel == 'production' && 'release' || 'staging-publish' }}
+    concurrency:
+      group: ${{ inputs.channel == 'production' && 'publish-latest' || 'publish-staging' }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      CHANNEL: ${{ inputs.channel }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select original frozen candidate
+        id: release
+        run: |
+          case "$MODE" in probe|bootstrap) ;; *) exit 2 ;; esac
+          node scripts/staging-release-run.mjs select "$RELEASE_RUN_ID" candidate-run.json "$CHANNEL"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.release_run_id }}
+          artifact-ids: ${{ steps.release.outputs.artifact_id }}
+          path: candidate
+      - name: Verify original attestation and all package hashes
+        id: candidate
+        run: |
+          gh attestation verify candidate/candidate.json --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/prepare-candidate.yml" \
+            --deny-self-hosted-runners --format json > verified-attestation.json
+          node scripts/staging-release-run.mjs verify candidate-run.json candidate verified-attestation.json "$CHANNEL"
+      - name: Discover CNB origins using only the public update manifest
+        if: inputs.mode == 'probe'
+        env:
+          CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_RELEASE_REPOSITORY: ${{ vars.CNB_RELEASE_REPOSITORY }}
+          CNB_UPLOAD_ORIGINS: ${{ vars.CNB_UPLOAD_ORIGINS }}
+        run: node scripts/probe-mirror-origins.mjs candidate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: inputs.mode == 'probe'
+        with:
+          name: mirror-origins-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mirror-origins.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Bootstrap current files and verify both mirrors before initializing the pointer
+        if: inputs.mode == 'bootstrap'
+        env:
+          CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CNB_RELEASE_REPOSITORY: ${{ vars.CNB_RELEASE_REPOSITORY }}
+          CNB_DOWNLOAD_ORIGINS: ${{ vars.CNB_DOWNLOAD_ORIGINS }}
+          CNB_UPLOAD_ORIGINS: ${{ vars.CNB_UPLOAD_ORIGINS }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          GLOBAL_MIRROR_PROBE_ORIGIN: ${{ vars.GLOBAL_MIRROR_PROBE_ORIGIN }}
+        run: |
+          aws --version
+          if [ "$CHANNEL" = production ]; then
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+              --max-time 60 --max-filesize 65536 https://download.shhield.ai/stable/latest.json -o published-latest.json
+            node scripts/publish-mirrors.mjs bootstrap candidate published-latest.json
+          else
+            node scripts/publish-mirrors.mjs bootstrap candidate
+          fi

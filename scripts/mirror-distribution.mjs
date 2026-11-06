@@ -139,6 +139,51 @@ async function uploadCnb(config, env, release, file, request) {
   assert.ok(confirmed.ok, `CNB upload confirmation failed: ${file.name}`);
 }
 
+export async function probeCnbOrigins(directory, candidate, { env = process.env, request = fetch } = {}) {
+  assert.ok(env.CNB_TOKEN, 'Missing CNB token');
+  assert.match(env.CNB_RELEASE_REPOSITORY || '', /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)+$/, 'Missing CNB release repository');
+  assert.equal(await sha256(path.join(directory, 'candidate.json')), env.CANDIDATE_SHA256, 'Frozen candidate digest required');
+  assert.deepEqual(await verifyCandidate(directory), candidate, 'Candidate changed before CNB probe');
+  assert.notEqual(candidate.windows_signing, 'unsigned', 'CNB probe requires a signed candidate');
+  const metadata = candidate.files.find(file => file.name === 'update.json');
+  assert.ok(metadata && metadata.size <= 65536, 'Probe requires a small public update manifest');
+  const file = { ...metadata, path: path.join(directory, metadata.name) };
+  await anonymousFile(`${publicOrigin}/${candidate.channel === 'production' ? 'stable' : 'staging'}/update.json`, file,
+    candidate.channel === 'production' ? ['https://github.com', 'https://release-assets.githubusercontent.com'] : [], request);
+  const config = { repository: env.CNB_RELEASE_REPOSITORY, uploadOrigins: [] };
+  const release = await ensureCnbRelease(config, env, candidate, request);
+  if (env.CNB_UPLOAD_ORIGINS) config.uploadOrigins = origins(env.CNB_UPLOAD_ORIGINS, 'CNB upload origins');
+  else {
+    const target = await cnbRequest(config, env, 'POST', `/${encodeURIComponent(release.id)}/asset-upload-url`, {
+      asset_name: file.name, size: file.size, overwrite: false,
+    }, false, request);
+    config.uploadOrigins = origins(JSON.stringify([new URL(target.upload_url).origin]), 'CNB upload origin');
+    console.log(`CNB API supplied upload origin: ${config.uploadOrigins[0]}`);
+  }
+  // Discovery only uploads an already-public manifest; it never changes an update channel pointer.
+  await uploadCnb(config, env, release, file, request);
+  const initial = `https://cnb.cool/${config.repository}/-/releases/download/${mirrorTag(candidate)}/${file.name}`;
+  let next = new URL(initial);
+  const downloadOrigins = [];
+  for (let count = 0; count <= 5; count++) {
+    const response = await request(next.href, { redirect: 'manual', credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    await response.body?.cancel();
+    if (response.status === 200) {
+      origins(JSON.stringify(downloadOrigins), 'CNB download origins');
+      await anonymousFile(initial, file, downloadOrigins, request);
+      return { repository: config.repository, uploadOrigins: config.uploadOrigins, downloadOrigins };
+    }
+    assert.ok([301, 302, 303, 307, 308].includes(response.status), `CNB probe HTTP ${response.status}`);
+    const location = response.headers.get('location');
+    assert.ok(location, 'Missing CNB probe redirect');
+    next = new URL(location, next);
+    assert.ok(next.protocol === 'https:' && !next.port && !next.username && !next.password && !next.hash, 'Invalid discovered CNB redirect');
+    origins(JSON.stringify([next.origin]), 'CNB download origin');
+    if (!downloadOrigins.includes(next.origin)) downloadOrigins.push(next.origin);
+  }
+  throw new Error('Too many CNB probe redirects');
+}
+
 export function nextPointer(candidate, digest) {
   const channel = candidate.channel === 'production' ? 'stable' : 'staging';
   return validatePointer({ schema_version: 1, channel, version: candidate.version, source_sha: candidate.source_sha,

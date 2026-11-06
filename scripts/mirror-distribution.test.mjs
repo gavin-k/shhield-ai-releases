@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCandidate, sha256 } from './release-candidate.mjs';
-import { commitPointer, mirrorMode, mirrorTag, nextPointer, publishMirrors, verifyAdvance } from './mirror-distribution.mjs';
+import { commitPointer, mirrorMode, mirrorTag, nextPointer, probeCnbOrigins, publishMirrors, verifyAdvance } from './mirror-distribution.mjs';
 import worker from '../download/worker.mjs';
 
 const candidate = { channel: 'staging', version: '1.0.20', source_sha: 'a'.repeat(40), run_id: '123', run_attempt: '2',
@@ -166,6 +166,22 @@ try {
     return new Response(corrupt === 'cnb' ? 'corrupt' : attachments.get(name));
   };
   const publish = env => publishMirrors(directory, frozen, undefined, { env: env ?? publishingEnv, request, r2 });
+  const publicFeed = await fs.readFile(path.join(directory, 'update.json'));
+  const probeRequest = (input, options) => input === 'https://download.shhield.ai/staging/update.json'
+    ? Promise.resolve(new Response(publicFeed)) : request(input, options);
+  await assert.rejects(probeCnbOrigins(directory, frozen, { env: publishingEnv, request }), /Mirror (size|hash)|exceeds frozen size/);
+  assert.equal(attachments.size, 0, 'an unpublished candidate must be rejected before CNB upload');
+  await assert.rejects(probeCnbOrigins(directory, frozen, { env: publishingEnv, request: probeRequest }), /Mirror (size|hash)|exceeds frozen size/);
+  corrupt = '';
+  assert.deepEqual(await probeCnbOrigins(directory, frozen, { env: { ...publishingEnv, CNB_UPLOAD_ORIGINS: '' }, request: probeRequest }), {
+    repository: policy.repository, uploadOrigins: policy.redirectOrigins, downloadOrigins: policy.redirectOrigins,
+  });
+  await assert.rejects(probeCnbOrigins(directory, frozen, { env: publishingEnv, request: (input, options) =>
+    new URL(input).origin === 'https://cnb.cool'
+      ? Promise.resolve(new Response(null, { status: 302, headers: { Location: 'http://untrusted.invalid/file' } }))
+      : probeRequest(input, options) }), /Invalid discovered CNB redirect/);
+  assert.equal(pointerWrites, 0, 'origin discovery must not authorize installation');
+  corrupt = 'cnb';
   for (const [override, expected] of [
     [{ GITHUB_REF: 'refs/heads/topic' }, /Staging publication requires main/],
     [{ GITHUB_RUN_ATTEMPT: '3' }, /Wrong run_attempt/],
