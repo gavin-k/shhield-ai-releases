@@ -92,6 +92,7 @@ for (const name of ['update.json', 'latest.json', 'latest-mac.yml']) {
 }
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'mirror-gate-'));
+const commands = await fs.mkdtemp(path.join(os.tmpdir(), 'mirror-commands-'));
 try {
   const identity = { channel: 'staging', version: '1.0.20', source_sha: 'a'.repeat(40), workflow_sha: 'd'.repeat(40), run_id: '123', run_attempt: '2', platforms: 'macos', windows_signing: 'signed' };
   for (const arch of ['arm64', 'x64']) await fs.writeFile(path.join(directory, `Shhield-AI-Staging-1.0.20-macos-${arch}.zip`), `synthetic-${arch}`);
@@ -111,6 +112,17 @@ try {
     CNB_TOKEN: 'synthetic', CNB_RELEASE_REPOSITORY: policy.repository, CNB_DOWNLOAD_ORIGINS: JSON.stringify(policy.redirectOrigins),
     CNB_UPLOAD_ORIGINS: JSON.stringify(policy.redirectOrigins), GLOBAL_MIRROR_PROBE_ORIGIN: 'https://global.example.invalid', CANDIDATE_SHA256: digest,
   };
+  for (const [stderr, expected] of [
+    ['An error occurred (AccessDenied) when calling GetObject: synthetic-private-signature', 'AccessDenied'],
+    ['An error occurred (synthetic-private-signature) when calling GetObject', 'CLI_ERROR'],
+  ]) {
+    await fs.writeFile(path.join(commands, 'aws'), `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(stderr)}); process.exit(1);\n`, { mode: 0o700 });
+    await assert.rejects(publishMirrors(directory, frozen, undefined, { bootstrap: true, env: { ...publishingEnv, PATH: commands } }), error => {
+      assert.equal(error.message, `R2 get-object failed (${expected})`);
+      assert.ok(!error.stack.includes('synthetic-private-signature'), 'raw AWS diagnostics must not reach workflow logs');
+      return true;
+    });
+  }
   let pointerWrites = 0;
   let corrupt = 'cnb';
   let loseResponse = true;
@@ -207,5 +219,8 @@ try {
   assert.equal(pointerWrites, 1, 'retry the original files without rewriting the pointer');
   await assert.rejects(publish({ ...publishingEnv, CNB_RELEASE_REPOSITORY: 'another/repository' }), /policies differ/);
   await assert.rejects(publish({ ...publishingEnv, CNB_DOWNLOAD_ORIGINS: '["https://cnb.cool"]' }), /Invalid CNB download origins/);
-} finally { await fs.rm(directory, { recursive: true, force: true }); }
+} finally {
+  await fs.rm(directory, { recursive: true, force: true });
+  await fs.rm(commands, { recursive: true, force: true });
+}
 console.log('PASS conditional publication, response-loss recovery, channel pointers and streamed Worker responses');

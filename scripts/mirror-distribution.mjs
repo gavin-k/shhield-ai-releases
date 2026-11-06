@@ -86,7 +86,9 @@ function r2Client(env) {
     } catch (error) {
       if (allowMissing && /\((NoSuchKey|404|NotFound)\)/.test(error.stderr || '')) return null;
       // AWS errors may include signed requests; never put them into public workflow logs.
-      const failure = new Error(`R2 ${command} failed`);
+      const code = /\((NoSuchBucket|AccessDenied|InvalidAccessKeyId|SignatureDoesNotMatch|InvalidToken|ExpiredToken|InvalidArgument|InvalidRequest|403|NoSuchKey|404|NotFound|PreconditionFailed|412)\)/.exec(error.stderr || '')?.[1]
+        ?? (error.code === 'ENOENT' ? 'CLI_NOT_FOUND' : 'CLI_ERROR');
+      const failure = new Error(`R2 ${command} failed (${code})`);
       failure.precondition = /\(PreconditionFailed\)|\(412\)/.test(error.stderr || '');
       throw failure;
     }
