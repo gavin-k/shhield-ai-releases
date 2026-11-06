@@ -76,4 +76,4 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 
 已添加 `scripts/mirror-distribution.test.mjs` 并接入原 `Test release scripts` 工作流。覆盖双源失败不提交、原文件重试、客户端/发布端策略一致、条件写入冲突、提交响应丢失、Worker 清单不回退及 streaming/HEAD 行为。
 
-当前仅执行语法与 diff 检查，未运行上述测试、真实 AWS/CNB API、Worker 部署或原生升级。需在获得测试授权后通过 GitHub Actions 执行；CI 替身结果仍不能代替真实网络、签名和升级验收。
+本地完成语法与 diff 检查；用户授权后，上述测试已在[发布 PR #20 的 GitHub Actions](https://github.com/gavin-k/shhield-ai-releases/actions/runs/42182530335) 通过，最新结果以 PR 检查记录为准。尚未验证真实 AWS/CNB API、Worker 部署或原生升级；CI 替身结果不能代替真实网络、签名和升级验收。
