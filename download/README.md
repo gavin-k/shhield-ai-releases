@@ -1,13 +1,13 @@
 # 更新镜像与同域下载入口
 
-状态（2026-11-06）：本地实现已完成，CNB 公开仓库与 R2 发布桶已创建并通过控制台核验；Worker 尚未部署。GitHub `staging-publish` 与 `release` 均已保存三项镜像发布 Secrets，以及 `R2_ACCOUNT_ID`、`R2_RELEASE_BUCKET`、`CNB_RELEASE_REPOSITORY` 三项变量；Secrets 只核对名称存在，未调用 API 验证凭据。发布模式继续为默认 `legacy`。不能通过修改变量跳过发布审批或真实升级验收。
+状态（2026-11-06）：客户端、发布链路和文档 PR 已合并，Worker 已部署至 `workers.dev` 预览域名并通过匿名访问检查。GitHub `staging-publish` 与 `release` 均已保存三项镜像发布 Secrets，以及账户、桶、CNB 仓库和 `GLOBAL_MIRROR_PROBE_ORIGIN` 变量；Secrets 只核对名称存在，未调用 API 验证凭据。当前版本尚未预置到镜像，线上路由未切流，发布模式继续为默认 `legacy`。不能通过修改变量跳过发布审批或真实升级验收。
 
 ## 已准备的资源
 
 - CNB：[`shhield-ai/shhield-ai-releases`](https://cnb.cool/shhield-ai/shhield-ai-releases)，公开仓库，`main` 已初始化。令牌列表已核实仅限该仓库，授权为 `repo-release:rw`。
 - R2：`shhield-releases`，Standard 存储，直接公开访问关闭；与已有备份桶分离。令牌列表已核实仅限该桶的对象读写权限，状态为活动。
 - 用户已把凭据保存至两个发布环境。CNB 实际令牌显示永久有效，与 90 天表单草稿不同；R2 列表未显示到期时间。不能将草稿中的 2027-02-04 作为实际轮换截止日，需按最终令牌状态管理轮换。尚未通过 API 验证凭据可用性。
-- `wrangler.jsonc` 已填写目标账户与桶，Worker 名称为 `shhield-downloads`，仅启用 `workers.dev`，没有线上 routes。部署成功后才记录实际预览 origin，不能把预计地址当成已可用入口。
+- Worker `shhield-downloads` 已部署，预览 origin 为 `https://shhield-downloads.lijy0717.workers.dev`，`RELEASES` 绑定已读回确认为 `shhield-releases`。`wrangler.jsonc` 没有线上 routes；未挂载 `download.shhield.ai`。
 - CNB 的上传和下载 origin 尚未实测；客户端策略继续未配置，发布模式保持 `legacy`。账户费用告警、实际下载表现及完整包校验仍待完成。
 
 ## 固定合同
@@ -48,7 +48,7 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 ## 迁移顺序
 
 1. 完成账户与域名核验，把实际 CNB 仓库/下载 origin 写入客户端策略，核对两侧配置；不要提交凭据。
-2. 审核 `wrangler.jsonc` 中的账户与 R2 binding，获准部署后先发布到 `workers.dev` 预览域名，不挂载线上路由；当前未安装或执行 Wrangler。R2 的对象访问凭据不能替代 Worker 部署授权。
+2. 审核 `wrangler.jsonc` 中的账户与 R2 binding，先发布到 `workers.dev` 预览域名，不挂载线上路由。此步已完成，部署证据见下文。R2 的对象访问凭据不能替代 Worker 部署授权。
 3. 暂停新版本发布并保存当前路由、GitHub latest、staging PVC `current` 及原清单字节。分别取得两个渠道当前已公布版本的原冻结候选，核对来源、attestation 和候选哈希；不是重新构建当前版本。
 4. 在受控发布环境设置上述变量和 `CANDIDATE_SHA256`。stable 还需要现有版本实际已发布的 `latest.json`，时间戳不能重新生成。执行对应 bootstrap：
 
@@ -76,4 +76,12 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 
 已添加 `scripts/mirror-distribution.test.mjs` 并接入原 `Test release scripts` 工作流。覆盖双源失败不提交、原文件重试、客户端/发布端策略一致、条件写入冲突、提交响应丢失、Worker 清单不回退及 streaming/HEAD 行为。
 
-本地完成语法与 diff 检查；用户授权后，上述测试已在[发布 PR #20 的 GitHub Actions](https://github.com/gavin-k/shhield-ai-releases/actions/runs/42182530335) 通过，最新结果以 PR 检查记录为准。尚未验证真实 AWS/CNB API、Worker 部署或原生升级；CI 替身结果不能代替真实网络、签名和升级验收。
+上述测试已在[发布 PR #20 合并后的 GitHub Actions](https://github.com/gavin-k/shhield-ai-releases/actions/runs/42191340872) 通过。尚未验证发布 Secrets 对真实 AWS/CNB API 的访问、双源完整包校验或原生升级；CI 替身结果不能代替真实网络、签名和升级验收。
+
+### Worker 预览部署记录（2026-11-06）
+
+- 来源为已合并提交 `38fc735167ecffecb782ccb8bc11d93612273562` 的 `download/worker.mjs`，原文件 SHA-256 为 `9130f8a7f33cee3a9d567bfeea15a008fd74b9683aef6e25e4cb6c4b32ac7cc6`。部署 ID 为 `ae3feaf25f994069a80040bf7b819f52`，Cloudflare 返回创建时间 `2026-11-06T09:36:34.235888Z`。
+- Wrangler `4.158.0` 的 dry-run 通过。其服务查询和部署查询接口返回 `503 no healthy upstream`，随后使用同一已批准 OAuth 连接，通过官方 Worker 上传 API 部署原文件与相同 R2 binding；官方设置接口读回成功。没有为此扩大 OAuth 权限。
+- [预览健康地址](https://shhield-downloads.lijy0717.workers.dev/staging/healthz) 在浏览器和 curl 中成功返回。curl 的六项检查通过：健康 GET/HEAD 为 200，两个渠道缺少指针时为 503，固定版本缺失对象为 404，POST 为 405；同时核对 `no-store`、staging `noindex, nofollow` 和 `X-Shhield-Distribution: r2`。缺失对象的 404 验证了实际 R2 binding 读取，但不代表安装包已就绪。
+- Python urllib 探针曾被 Cloudflare 边缘返回 `403 / 1010`；浏览器和 curl 验证通过。尚不能据此宣称所有网络和发布客户端都可用，后续 bootstrap 必须通过真实发布流程的匿名读回。
+- 预览 origin 已写入两个发布环境。当前渠道仍需按上述顺序预置原冻结候选、验证 CNB 跳转 origin 和双源完整包，再迁移线上路由。
