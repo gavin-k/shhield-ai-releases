@@ -65,9 +65,23 @@ jobs:
           STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
           STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
           STAGING_SSH_TARGET: ${{ vars.STAGING_SSH_TARGET }}
+          UPDATE_DISTRIBUTION_MODE: ${{ vars.UPDATE_DISTRIBUTION_MODE }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CNB_RELEASE_REPOSITORY: ${{ vars.CNB_RELEASE_REPOSITORY }}
+          CNB_DOWNLOAD_ORIGINS: ${{ vars.CNB_DOWNLOAD_ORIGINS }}
+          CNB_UPLOAD_ORIGINS: ${{ vars.CNB_UPLOAD_ORIGINS }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          GLOBAL_MIRROR_PROBE_ORIGIN: ${{ vars.GLOBAL_MIRROR_PROBE_ORIGIN }}
         run: |
-          GITHUB_SHA="$RELEASE_WORKFLOW_SHA" GITHUB_RUN_ID="$RELEASE_RUN_ID" GITHUB_RUN_ATTEMPT="$RELEASE_RUN_ATTEMPT" \
-            bash scripts/publish-staging-ssh.sh candidate
+          export GITHUB_SHA="$RELEASE_WORKFLOW_SHA" GITHUB_RUN_ID="$RELEASE_RUN_ID" GITHUB_RUN_ATTEMPT="$RELEASE_RUN_ATTEMPT"
+          case "${UPDATE_DISTRIBUTION_MODE:-legacy}" in
+            mirrors) node scripts/publish-mirrors.mjs staging candidate ;;
+            legacy) bash scripts/publish-staging-ssh.sh candidate ;;
+            *) echo 'Invalid update distribution mode' >&2; exit 2 ;;
+          esac
       - name: Verify testing download and update channels
         env:
           CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}

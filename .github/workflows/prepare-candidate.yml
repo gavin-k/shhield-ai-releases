@@ -57,6 +57,22 @@ jobs:
           path: candidate
       - name: Generate channel-pinned update metadata before freezing
         run: node scripts/generate-update-manifests.mjs candidate "$VERSION" "$CHANNEL" "$SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+      - name: Read compiled mirror policy from the exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gavin-k/shhield-ai
+          ref: ${{ inputs.source_sha }}
+          path: source-policy
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+          sparse-checkout: ui/desktop/src/update-mirror-policy.json
+          sparse-checkout-cone-mode: false
+      - name: Include public mirror policy when supported by the source
+        run: |
+          test ! -e candidate/mirror-policy.json
+          if [ -f source-policy/ui/desktop/src/update-mirror-policy.json ]; then
+            cp source-policy/ui/desktop/src/update-mirror-policy.json candidate/mirror-policy.json
+          fi
       - name: Check service and freeze candidate
         id: manifest
         run: |
