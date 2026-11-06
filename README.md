@@ -4,6 +4,10 @@ Official release repository for Shhield AI.
 
 Download the latest version from [Releases](../../releases/latest).
 
+The optional R2/CNB distribution path and its migration gates are documented in
+[download/README.md](download/README.md). It remains disabled until current releases,
+the compiled client policy, accounts and routes have been verified.
+
 ## Release checklist
 
 1. Run **Release** on `main` with a final version, exact reviewed source SHA and

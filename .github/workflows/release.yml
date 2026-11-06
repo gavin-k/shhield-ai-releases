@@ -47,6 +47,7 @@ jobs:
           node scripts/update-manifests.test.mjs
           node scripts/publish-staging.test.mjs
           node scripts/staging-publish.test.mjs
+          node scripts/mirror-distribution.test.mjs
           node scripts/release-candidate.mjs preflight
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -250,6 +251,16 @@ jobs:
       RELEASE_PLATFORMS: ${{ needs.validate.outputs.production_platforms }}
       CANDIDATE_SHA256: ${{ needs.production-candidate.outputs.sha256 }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      UPDATE_DISTRIBUTION_MODE: ${{ vars.UPDATE_DISTRIBUTION_MODE }}
+      R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+      R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      CNB_RELEASE_REPOSITORY: ${{ vars.CNB_RELEASE_REPOSITORY }}
+      CNB_DOWNLOAD_ORIGINS: ${{ vars.CNB_DOWNLOAD_ORIGINS }}
+      CNB_UPLOAD_ORIGINS: ${{ vars.CNB_UPLOAD_ORIGINS }}
+      CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+      GLOBAL_MIRROR_PROBE_ORIGIN: ${{ vars.GLOBAL_MIRROR_PROBE_ORIGIN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

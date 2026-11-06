@@ -24,3 +24,4 @@ jobs:
           node scripts/update-manifests.test.mjs
           node scripts/publish-staging.test.mjs
           node scripts/staging-publish.test.mjs
+          node scripts/mirror-distribution.test.mjs

@@ -94,7 +94,7 @@ function validatePackages(names, identity) {
   }
   const packageFile = id => packages.find(([, packageId]) => packageId === id)?.[0];
   for (const name of names) {
-    if (name === 'update.json') continue;
+    if (name === 'update.json' || name === 'mirror-policy.json') continue;
     assert.match(name, /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(zip|msi|sha256|deb|rpm|flatpak|yml)$/);
     if (/unsigned/i.test(name)) {
       const msi = packageFile('windows-msi');
@@ -152,6 +152,17 @@ export function updatePrefix(identity) {
 }
 
 async function verifyUpdateMetadata(directory, candidate) {
+  if (candidate.files.some(file => file.name === 'mirror-policy.json')) {
+    const policy = JSON.parse(await fs.readFile(path.join(directory, 'mirror-policy.json'), 'utf8'));
+    assert.deepEqual(Object.keys(policy).sort(), ['redirectOrigins', 'repository'], 'Unexpected mirror policy fields');
+    assert.ok(policy.repository === null || (typeof policy.repository === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)+$/.test(policy.repository)), 'Invalid mirror repository');
+    assert.ok(Array.isArray(policy.redirectOrigins), 'Invalid mirror origins');
+    for (const origin of policy.redirectOrigins) {
+      const url = new URL(origin);
+      assert.ok(url.origin === origin && url.protocol === 'https:' && !url.port && !url.username && !url.password && url.hostname !== 'cnb.cool', 'Invalid mirror origin');
+    }
+    assert.equal(policy.repository === null, policy.redirectOrigins.length === 0, 'Mirror repository and origins must be configured together');
+  }
   // Old accepted candidates predate update feeds; new prepare-candidate always generates them.
   if (!candidate.files.some(file => file.name === 'update.json')) return;
   const feed = JSON.parse(await fs.readFile(path.join(directory, 'update.json'), 'utf8'));

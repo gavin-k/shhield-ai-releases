@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { offeredPlatforms, sha256, verifyCandidate, websiteManifest } from './release-candidate.mjs';
+import { mirrorMode, publishMirrors } from './mirror-distribution.mjs';
 
 const repository = process.env.GITHUB_REPOSITORY;
 assert.equal(repository, 'gavin-k/shhield-ai-releases');
@@ -95,7 +96,8 @@ try {
       assert.equal(await sha256(path.join(checkDirectory, asset.name)), await sha256(file));
     }
   }
-  // The download domain follows GitHub's latest pointer; switch it only after all assets pass.
+  if (mirrorMode()) await publishMirrors(directory, candidate, manifestFile);
+  // In mirror mode the R2 pointer is authoritative; GitHub remains an archive and package fallback.
   gh('release', 'edit', tag, '--repo', repository, '--draft=false', '--latest');
   const response = await fetch('https://download.shhield.ai/stable/latest.json', { signal: AbortSignal.timeout(30000) });
   assert.equal(response.status, 200, 'Release published but download manifest is unavailable; retry this publish job');
