@@ -5,9 +5,12 @@
   "main": "worker.mjs",
   "compatibility_date": "2026-11-06",
   "workers_dev": true,
+  "routes": [
+    { "pattern": "download.shhield.ai/stable/*", "zone_name": "shhield.ai" },
+    { "pattern": "download.shhield.ai/staging/*", "zone_name": "shhield.ai" },
+    { "pattern": "download.shhield.ai/releases/*", "zone_name": "shhield.ai" }
+  ],
   "r2_buckets": [
     { "binding": "RELEASES", "bucket_name": "shhield-releases" }
   ]
-  // Add the download.shhield.ai/stable/*, /staging/* and /releases/* routes only
-  // after both current-channel candidates and pointers pass the migration checks.
 }
