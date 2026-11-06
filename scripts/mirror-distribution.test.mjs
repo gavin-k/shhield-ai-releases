@@ -111,6 +111,18 @@ try {
     CNB_TOKEN: 'synthetic', CNB_RELEASE_REPOSITORY: policy.repository, CNB_DOWNLOAD_ORIGINS: JSON.stringify(policy.redirectOrigins),
     CNB_UPLOAD_ORIGINS: JSON.stringify(policy.redirectOrigins), GLOBAL_MIRROR_PROBE_ORIGIN: 'https://global.example.invalid', CANDIDATE_SHA256: digest,
   };
+  for (const [stderr, expected] of [
+    ['An error occurred (AccessDenied) when calling GetObject: synthetic-private-signature', 'AccessDenied'],
+    ['An error occurred (synthetic-private-signature) when calling GetObject', 'CLI_ERROR'],
+  ]) {
+    await fs.writeFile(path.join(directory, 'aws'), `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(stderr)}); process.exit(1);\n`, { mode: 0o700 });
+    await assert.rejects(publishMirrors(directory, frozen, undefined, { bootstrap: true, env: { ...publishingEnv, PATH: directory } }), error => {
+      assert.equal(error.message, `R2 get-object failed (${expected})`);
+      assert.ok(!error.stack.includes('synthetic-private-signature'), 'raw AWS diagnostics must not reach workflow logs');
+      return true;
+    });
+  }
+  await fs.unlink(path.join(directory, 'aws'));
   let pointerWrites = 0;
   let corrupt = 'cnb';
   let loseResponse = true;
