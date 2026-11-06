@@ -1,6 +1,14 @@
 # 更新镜像与同域下载入口
 
-状态：本地实现，尚未配置或部署。CNB 仓库尚未创建；Cloudflare/R2 账户资格、额度及下载网络均待验证。不能通过修改变量跳过发布审批或真实升级验收。
+状态（2026-11-06）：本地实现已完成，CNB 公开仓库与 R2 发布桶已创建并通过控制台核验；Worker 尚未部署。GitHub `staging-publish` 与 `release` 均已保存三项镜像发布 Secrets，以及 `R2_ACCOUNT_ID`、`R2_RELEASE_BUCKET`、`CNB_RELEASE_REPOSITORY` 三项变量；Secrets 只核对名称存在，未调用 API 验证凭据。发布模式继续为默认 `legacy`。不能通过修改变量跳过发布审批或真实升级验收。
+
+## 已准备的资源
+
+- CNB：[`shhield-ai/shhield-ai-releases`](https://cnb.cool/shhield-ai/shhield-ai-releases)，公开仓库，`main` 已初始化。令牌列表已核实仅限该仓库，授权为 `repo-release:rw`。
+- R2：`shhield-releases`，Standard 存储，直接公开访问关闭；与已有备份桶分离。令牌列表已核实仅限该桶的对象读写权限，状态为活动。
+- 用户已把凭据保存至两个发布环境。CNB 实际令牌显示永久有效，与 90 天表单草稿不同；R2 列表未显示到期时间。不能将草稿中的 2027-02-04 作为实际轮换截止日，需按最终令牌状态管理轮换。尚未通过 API 验证凭据可用性。
+- `wrangler.jsonc` 已填写目标账户与桶，Worker 名称为 `shhield-downloads`，仅启用 `workers.dev`，没有线上 routes。部署成功后才记录实际预览 origin，不能把预计地址当成已可用入口。
+- CNB 的上传和下载 origin 尚未实测；客户端策略继续未配置，发布模式保持 `legacy`。账户费用告警、实际下载表现及完整包校验仍待完成。
 
 ## 固定合同
 
@@ -27,10 +35,10 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 | 类型 | 名称 | 用途 |
 | --- | --- | --- |
 | Variable | `UPDATE_DISTRIBUTION_MODE` | 空或 `legacy` 保留旧发布方式；完成迁移后设置 `mirrors`；其他值报错 |
-| Variable | `R2_ACCOUNT_ID`、`R2_RELEASE_BUCKET` | 目标账户和发布桶 |
+| Variable | `R2_ACCOUNT_ID`、`R2_RELEASE_BUCKET` | 分别为 `3e87efa04e6357d6f423001eb9c69798`、`shhield-releases` |
 | Secret | `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY` | 限定目标桶的读写凭据；不写入源码、候选或客户端 |
 | Variable | `GLOBAL_MIRROR_PROBE_ORIGIN` | 指向同一桶的 Worker 预览 HTTPS origin，供切流前验证；正常发布读回用户使用的 canonical 域名 |
-| Variable | `CNB_RELEASE_REPOSITORY` | 已验证的完整组织/仓库路径 |
+| Variable | `CNB_RELEASE_REPOSITORY` | `shhield-ai/shhield-ai-releases` |
 | Variable | `CNB_DOWNLOAD_ORIGINS` | 精确下载跳转 origin 的 JSON 数组，与客户端策略完全一致 |
 | Variable | `CNB_UPLOAD_ORIGINS` | 精确上传 origin 的 JSON 数组，仅发布端使用 |
 | Secret | `CNB_TOKEN` | 仅目标发布仓库所需的 Release 管理和附件上传权限 |
@@ -40,7 +48,7 @@ CNB 发布者需要微信、本人手机号及平台实名认证。其公开 Rel
 ## 迁移顺序
 
 1. 完成账户与域名核验，把实际 CNB 仓库/下载 origin 写入客户端策略，核对两侧配置；不要提交凭据。
-2. 根据 `wrangler.example.jsonc` 建立部署配置，绑定已核实的 R2 桶。先部署到预览域名，不挂载线上路由；本次没有安装或执行 Wrangler。
+2. 审核 `wrangler.jsonc` 中的账户与 R2 binding，获准部署后先发布到 `workers.dev` 预览域名，不挂载线上路由；当前未安装或执行 Wrangler。R2 的对象访问凭据不能替代 Worker 部署授权。
 3. 暂停新版本发布并保存当前路由、GitHub latest、staging PVC `current` 及原清单字节。分别取得两个渠道当前已公布版本的原冻结候选，核对来源、attestation 和候选哈希；不是重新构建当前版本。
 4. 在受控发布环境设置上述变量和 `CANDIDATE_SHA256`。stable 还需要现有版本实际已发布的 `latest.json`，时间戳不能重新生成。执行对应 bootstrap：
 

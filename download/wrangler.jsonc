@@ -1,11 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "shhield-downloads",
+  "account_id": "3e87efa04e6357d6f423001eb9c69798",
   "main": "worker.mjs",
   "compatibility_date": "2026-11-06",
   "workers_dev": true,
   "r2_buckets": [
-    { "binding": "RELEASES", "bucket_name": "REPLACE_WITH_VERIFIED_RELEASE_BUCKET" }
+    { "binding": "RELEASES", "bucket_name": "shhield-releases" }
   ]
   // Add the download.shhield.ai/stable/*, /staging/* and /releases/* routes only
   // after both current-channel candidates and pointers pass the migration checks.
