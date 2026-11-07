@@ -48,6 +48,7 @@ jobs:
           node scripts/publish-staging.test.mjs
           node scripts/staging-publish.test.mjs
           node scripts/mirror-distribution.test.mjs
+          node scripts/r2-retention.test.mjs
           node scripts/release-candidate.mjs preflight
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

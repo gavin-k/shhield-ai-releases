@@ -14,7 +14,7 @@
 
 执行范围：通道 `S`；允许触碰 `scripts/{mirror-distribution,r2-retention,prune-r2}*.mjs`、`.github/workflows/{release,publish-staging,test}.yml` 和本文；验收测试 `scripts/r2-retention.test.mjs`、`scripts/mirror-distribution.test.mjs`；`blocked-by-sync: false`；执行模型：当前会话 Codex 主代理。
 
-本次本地验证：相关 JavaScript 语法检查、三个 workflow 的 YAML 解析及 `git diff --check` 通过。测试已接入 `Test release scripts`，按仓库约束未在本地运行；尚未部署、执行真实对象删除或验收真实签名版本升级。
+本次本地验证：相关 JavaScript 语法检查、三个 workflow 的 YAML 解析及 `git diff --check` 通过。测试已接入 `Test release scripts` 和每次 Release 的前置检查，清理逻辑断言失败时不能进入发布；按仓库约束未在本地运行测试。此记录写入时尚未部署、执行真实对象删除或验收真实签名版本升级。
 
 状态（2026-11-06）：两个渠道已发布的 1.0.20 原候选已同步到 R2 和 CNB，全部文件经匿名读回和完整哈希校验后初始化渠道指针。三条 `download.shhield.ai` 路由已接入 Worker，六份兼容清单保持原字节，安装包 HEAD 检查通过。GitHub `staging-publish` 与 `release` 的 `UPDATE_DISTRIBUTION_MODE` 均已设为 `mirrors`。本次按维护者授权先切流，再在新的 staging 签名包上真机验收；`staging-acceptance` 与 `release` 审批保护保持不变。
 
