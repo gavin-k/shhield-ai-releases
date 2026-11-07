@@ -277,3 +277,6 @@ jobs:
         run: |
           node scripts/publish-candidate.mjs candidate
           node scripts/verify-downloads.mjs candidate
+      - name: Retain the latest three published R2 versions
+        if: vars.UPDATE_DISTRIBUTION_MODE == 'mirrors'
+        run: node scripts/prune-r2.mjs stable

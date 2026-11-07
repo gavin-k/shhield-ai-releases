@@ -212,9 +212,12 @@ try {
   corrupt = 'global';
   await assert.rejects(publish(), /Mirror HTTP 503/);
   assert.equal(pointerWrites, 0, 'an unavailable global copy must not announce a release');
+  assert.ok(![...stored.keys()].some(key => key.startsWith('_published/')), 'failed publication must not enter retention history');
   corrupt = '';
   await publish();
   assert.equal(pointerWrites, 1, 'all sources verified before committing, including lost-response recovery');
+  assert.ok(stored.has(`_published/${old.prefix}receipt.json`));
+  assert.ok(stored.has(`_published/${nextPointer(frozen, digest).prefix}receipt.json`));
   await publish();
   assert.equal(pointerWrites, 1, 'retry the original files without rewriting the pointer');
   await assert.rejects(publish({ ...publishingEnv, CNB_RELEASE_REPOSITORY: 'another/repository' }), /policies differ/);

@@ -1,5 +1,21 @@
 # 更新镜像与同域下载入口
 
+## R2 版本保留（2026-11-08）
+
+正式渠道保留最近 3 个已发布版本；staging 保留最近 3 个已发布候选批次，同版本重建按不同批次计数。始终保护当前渠道指针，即使人工回退到了较早版本。GitHub 与 CNB 不参与删除，正式版客户端仍以 GitHub 为最后的安装包后备；staging 没有对应的 GitHub Release 后备，继续使用 R2/CNB。
+
+`publishMirrors` 在推进渠道指针前记录已确认的上一版本，提交后记录新版本。记录为 `_published/<原版本前缀>/receipt.json`，固定版本不可覆盖；失败或只上传了一部分的候选不会成为新发布记录。正常发布在 `verify-downloads.mjs` 成功后运行 `prune-r2.mjs stable|staging`，与发布共用同一渠道的并发锁。仅删除相应渠道过期版本的对象和收据，不触碰另一渠道和 `_channels/`。每个版本删除前重读渠道身份及 ETag，发生变化立即停止。清理失败会使该独立步骤报错，但不撤销已经发布的版本；保留未清理完的收据，重跑发布 job 可继续清理。
+
+首次上线时，旧对象没有发布收据，不能直接拿目录时间推断发布成功。收据不足 3 条时保守保留历史对象；累计确认 3 个版本后，自动清理版本号低于这三个版本下界的旧目录，无须将失败上传计入保留名额。历史同版本、无收据的 staging 批次不能证明发布顺序，保守保留；不完整的新候选不计入三个名额，也不在本次策略中按时间淘汰。因此迁移阶段或存在未发布上传时，桶内目录可能暂时多于三个。不要配置会独立删除当前版本的按天生命周期规则；存储使用 Standard。
+
+手工恢复清理时，在对应渠道的同一发布锁内、使用原发布环境执行 `node scripts/prune-r2.mjs stable` 或 `node scripts/prune-r2.mjs staging`。人工回退指针也必须使用该锁；R2 无跨对象事务，不能与清理并行修改指针。不要为故障回退关闭安装前的清单复核。
+
+上线顺序：先合入应用的清单刷新/有限恢复改动并发布客户端，再启用本发布端清理步骤。旧应用不会因服务端切换而获得新恢复行为；GitHub 保底继续保留，不删除历史 Release。首次上线的历史对象按上述收据下界逐步收敛，不把未经确认的目录直接当作已发布版本。
+
+执行范围：通道 `S`；允许触碰 `scripts/{mirror-distribution,r2-retention,prune-r2}*.mjs`、`.github/workflows/{release,publish-staging,test}.yml` 和本文；验收测试 `scripts/r2-retention.test.mjs`、`scripts/mirror-distribution.test.mjs`；`blocked-by-sync: false`；执行模型：当前会话 Codex 主代理。
+
+本次本地验证：相关 JavaScript 语法检查、三个 workflow 的 YAML 解析及 `git diff --check` 通过。测试已接入 `Test release scripts`，按仓库约束未在本地运行；尚未部署、执行真实对象删除或验收真实签名版本升级。
+
 状态（2026-11-06）：两个渠道已发布的 1.0.20 原候选已同步到 R2 和 CNB，全部文件经匿名读回和完整哈希校验后初始化渠道指针。三条 `download.shhield.ai` 路由已接入 Worker，六份兼容清单保持原字节，安装包 HEAD 检查通过。GitHub `staging-publish` 与 `release` 的 `UPDATE_DISTRIBUTION_MODE` 均已设为 `mirrors`。本次按维护者授权先切流，再在新的 staging 签名包上真机验收；`staging-acceptance` 与 `release` 审批保护保持不变。
 
 ## 已准备的资源

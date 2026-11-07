@@ -86,3 +86,11 @@ jobs:
         env:
           CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
         run: node scripts/verify-downloads.mjs candidate
+      - name: Retain the latest three published R2 candidate batches
+        if: vars.UPDATE_DISTRIBUTION_MODE == 'mirrors'
+        env:
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/prune-r2.mjs staging
