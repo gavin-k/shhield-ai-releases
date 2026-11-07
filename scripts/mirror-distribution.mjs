@@ -8,6 +8,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { offeredPlatforms, sha256, updatePrefix, verifyCandidate } from './release-candidate.mjs';
 import { validatePointer } from '../download/worker.mjs';
+import { recordPublishedRelease } from './r2-retention.mjs';
 
 const execute = promisify(execFile);
 const apiOrigin = 'https://api.cnb.cool';
@@ -73,7 +74,7 @@ async function anonymousFile(url, file, allowedOrigins, request = fetch) {
   throw new Error('Too many mirror redirects');
 }
 
-function r2Client(env) {
+export function r2Client(env) {
   return async (command, args, allowMissing = false) => {
     try {
       const { stdout } = await execute('aws', ['--endpoint-url', `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`, '--region', 'auto', '--no-cli-pager', '--output', 'json',
@@ -286,12 +287,14 @@ export async function publishMirrors(directory, candidate, websiteFile, { bootst
     assert.equal(await sha256(path.join(directory, 'candidate.json')), digest, 'Candidate metadata changed during publication');
     if (bootstrap) await anonymousFile(`${publicOrigin}/${next.channel}/update.json`, candidate.files.find(file => file.name === 'update.json'),
       next.channel === 'stable' ? ['https://github.com', 'https://release-assets.githubusercontent.com'] : [], request);
+    if (previous) await recordPublishedRelease(r2, temporary, previous.value);
     await commitPointer({ previous, next, read, put: async (value, etag) => {
       const file = path.join(temporary, 'next.json');
       await fs.writeFile(file, JSON.stringify(value) + '\n');
       await r2('put-object', ['--key', key, '--body', file, '--content-type', 'application/json', '--cache-control', 'no-store',
         ...(etag ? ['--if-match', etag] : ['--if-none-match', '*'])]);
     } });
+    await recordPublishedRelease(r2, temporary, next);
     return next;
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }

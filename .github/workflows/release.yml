@@ -48,6 +48,7 @@ jobs:
           node scripts/publish-staging.test.mjs
           node scripts/staging-publish.test.mjs
           node scripts/mirror-distribution.test.mjs
+          node scripts/r2-retention.test.mjs
           node scripts/release-candidate.mjs preflight
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -277,3 +278,6 @@ jobs:
         run: |
           node scripts/publish-candidate.mjs candidate
           node scripts/verify-downloads.mjs candidate
+      - name: Retain the latest three published R2 versions
+        if: vars.UPDATE_DISTRIBUTION_MODE == 'mirrors'
+        run: node scripts/prune-r2.mjs stable
