@@ -64,6 +64,8 @@ try {
     for (let n = 1; n <= 5; n++) await publish(pointer(channel, n));
   }
   put('releases/0.0.1/untracked.zip', 'legacy objects are not proof of publication');
+  const storeCatalog = ['stable', 'staging'].flatMap(channel => [`_store/${channel}/store-catalog.json`, `_store/${channel}/store-catalog.json.sig`]);
+  for (const key of storeCatalog) put(key, 'signed store catalog');
   const unpublished = pointer('staging', 90).prefix + 'package.zip';
   put(unpublished, 'failed upload must not displace published batches');
   const stable = await prunePublishedReleases(r2, directory, 'stable');
@@ -98,6 +100,7 @@ try {
   await assert.rejects(prunePublishedReleases(r2, directory, 'stable'), /Invalid release pointer/);
   objects.delete(bad);
   await assert.rejects(prunePublishedReleases(r2, directory, 'production'), /Invalid retention channel/);
+  for (const key of storeCatalog) assert.ok(objects.has(key), `retention must not delete ${key}`);
 } finally {
   await fs.rm(directory, { recursive: true, force: true });
 }

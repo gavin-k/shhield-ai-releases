@@ -18,6 +18,25 @@
 
 状态（2026-11-06）：两个渠道已发布的 1.0.20 原候选已同步到 R2 和 CNB，全部文件经匿名读回和完整哈希校验后初始化渠道指针。三条 `download.shhield.ai` 路由已接入 Worker，六份兼容清单保持原字节，安装包 HEAD 检查通过。GitHub `staging-publish` 与 `release` 的 `UPDATE_DISTRIBUTION_MODE` 均已设为 `mirrors`。本次按维护者授权先切流，再在新的 staging 签名包上真机验收；`staging-acceptance` 与 `release` 审批保护保持不变。
 
+## 扩展商店清单（2026-11-18）
+
+桌面应用从 `https://download.shhield.ai/<stable|staging>/store-catalog.json` 读取扩展商店清单，从同一地址加 `.sig` 读取签名。应用只接受同域直接返回的 200，重定向按失败处理；清单上限 512 KiB，签名上限 256 字节。签名是清单文件原始字节的 Ed25519 签名（base64），应用用内置公钥验签，读取或验签失败时使用内置清单。
+
+| 地址 | R2 对象 key | 上传元数据 |
+| --- | --- | --- |
+| `/<channel>/store-catalog.json` | `_store/<channel>/store-catalog.json` | `application/json`、`no-store` |
+| `/<channel>/store-catalog.json.sig` | `_store/<channel>/store-catalog.json.sig` | `text/plain`、`no-store` |
+
+Worker 直接从 R2 binding 读取这两个对象，返回同域 200、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`；对象不存在返回 404，超过上限返回 503；staging 保持 `noindex`。方法和查询参数的处理与 `update.json` 相同（仅 GET/HEAD，带查询参数 404）。现有 `/stable/*`、`/staging/*` 路由已覆盖，无需改 routes；修改 `worker.mjs` 后须重新部署 Worker 才生效。`r2-retention.mjs` 只列举 `_published/` 与版本前缀，不会删除 `_store/`，`r2-retention.test.mjs` 对此有断言。
+
+发布入口是 **Publish store catalog**（`publish-store-catalog.yml`），仅允许 `main`，输入渠道和源码仓库 `gavin-k/shhield-ai` 的完整提交 SHA。它用 `SOURCE_DEPLOY_KEY` 检出该 SHA 并确认其是源码 `origin/main` 的祖先，运行 `store-catalog-check.mjs`，再用 `store-catalog-sign.mjs sign` 签名 `ui/desktop/src/components/store/catalog.json`。随后 `scripts/publish-store-catalog.mjs` 先在本地校验大小、签名格式，并用该 SHA 中 `storeCatalogFeed.ts` 的 `PRODUCTION_PUBLIC_KEY_HEX` 验签，然后上传清单和签名，最后匿名从 canonical 域名读回两者并逐字节比对；任一不一致即以非零状态退出。R2 无跨对象事务，两次上传之间应用可能读到不匹配的一对，会按验签失败使用内置清单；脚本结束时两者必须一致，读回失败时重跑工作流。
+
+- stable 使用 `release` 环境（保留审批），staging 使用 `staging-publish` 环境；并发锁分别与该渠道其他 R2 写入共用 `publish-latest`、`publish-staging`。
+- `STORE_CATALOG_SIGNING_KEY`（PKCS#8 PEM 格式的 Ed25519 私钥，即 `store-catalog-sign.mjs keygen` 的输出）须作为 Secret 配置在 `release` 和 `staging-publish` 两个环境；R2 变量与凭据沿用现有配置。私钥只在签名步骤写入 `$RUNNER_TEMP` 下权限 600 的临时文件，步骤结束即删除；签名步骤不接触 R2 凭据，发布步骤不接触私钥。私钥不得写入任何仓库、artifact 或日志。
+- 兼容性：发布的清单必须能被已发布应用版本的校验规则接受。旧版本会丢弃含其不认识的字段值的条目，因此在旧版本仍在使用时，新增取值只应出现在可以被旧版本丢弃的条目上。更换公钥只对内置新公钥的版本生效，旧版本会退回内置清单。
+
+回滚：用上一份已审核源码 SHA 重新运行工作流，重新发布上一份清单；或在受控环境、同一渠道锁内删除 `_store/<channel>/` 下的两个对象，此时 Worker 返回 404，应用回退到内置清单。
+
 ## 已准备的资源
 
 - CNB：[`shhield-ai/shhield-ai-releases`](https://cnb.cool/shhield-ai/shhield-ai-releases)，公开仓库，`main` 已初始化。令牌列表已核实仅限该仓库，授权为 `repo-release:rw`。
