@@ -2,6 +2,9 @@ const version = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const stablePrefix = new RegExp(`^releases/${version}/$`);
 const stagingPrefix = new RegExp(`^staging/releases/${version}/[a-f0-9]{40}/[1-9]\\d*-[1-9]\\d*/$`);
 const fileName = /^[A-Za-z0-9][A-Za-z0-9_+.-]*\.(?:zip|msi|sha256|deb|rpm|flatpak|yml|json)$/;
+// The desktop app rejects larger store catalog responses; serving them would only waste its download.
+export const storeCatalogLimits = { 'store-catalog.json': 512 * 1024, 'store-catalog.json.sig': 256 };
+const storeCatalogTypes = { 'store-catalog.json': 'application/json', 'store-catalog.json.sig': 'text/plain; charset=utf-8' };
 
 export function validatePointer(pointer, channel) {
   if (pointer?.schema_version !== 1 || pointer.channel !== channel ||
@@ -32,9 +35,12 @@ export default {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'X-Shhield-Distribution': 'r2' },
     });
     const active = /^\/(stable|staging)\/(update\.json|latest\.json|latest-mac\.yml)$/.exec(url.pathname);
+    const store = /^\/(stable|staging)\/(store-catalog\.json(?:\.sig)?)$/.exec(url.pathname);
     let key;
     try {
-      if (active) {
+      if (store) {
+        key = `_store/${store[1]}/${store[2]}`;
+      } else if (active) {
         // Binding reads bypass CDN caches; no stale pointer or manifest may authorize installation.
         const stored = await env.RELEASES.get(`_channels/${active[1]}.json`);
         if (!stored) return failure(503, staging);
@@ -51,13 +57,18 @@ export default {
       }
       const object = request.method === 'HEAD' ? await env.RELEASES.head(key) : await env.RELEASES.get(key);
       if (!object) return failure(active ? 503 : 404, staging);
+      if (store && object.size > storeCatalogLimits[store[2]]) {
+        await object.body?.cancel();
+        return failure(503, staging);
+      }
       const headers = new Headers();
       object.writeHttpMetadata(headers);
+      if (store) headers.set('Content-Type', storeCatalogTypes[store[2]]);
       headers.set('Content-Length', String(object.size));
       headers.set('ETag', object.httpEtag);
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('X-Shhield-Distribution', 'r2');
-      headers.set('Cache-Control', active || staging || key.endsWith('.json') || key.endsWith('.yml') ? 'no-store' : 'public, max-age=31536000, immutable');
+      headers.set('Cache-Control', active || store || staging || key.endsWith('.json') || key.endsWith('.yml') ? 'no-store' : 'public, max-age=31536000, immutable');
       if (staging) headers.set('X-Robots-Tag', 'noindex, nofollow');
       // The first client version restarts partial transfers; a Range request receives the full object.
       return new Response(request.method === 'HEAD' ? null : object.body, { headers });

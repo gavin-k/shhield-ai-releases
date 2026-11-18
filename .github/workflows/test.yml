@@ -26,3 +26,4 @@ jobs:
           node scripts/staging-publish.test.mjs
           node scripts/mirror-distribution.test.mjs
           node scripts/r2-retention.test.mjs
+          node scripts/publish-store-catalog.test.mjs

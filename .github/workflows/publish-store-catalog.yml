@@ -1,0 +1,97 @@
+name: Publish store catalog
+run-name: Store catalog ${{ inputs.channel }} from ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        options: [staging, stable]
+        required: true
+      source_sha:
+        description: 'Exact reviewed commit SHA in the source repository'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.channel == 'stable' && 'release' || 'staging-publish' }}
+    # The same lock as every other R2 write for the channel (release publish, staging publish, bootstrap).
+    concurrency:
+      group: ${{ inputs.channel == 'stable' && 'publish-latest' || 'publish-staging' }}
+      cancel-in-progress: false
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate inputs and publisher
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          case "$CHANNEL" in stable|staging) ;; *) exit 2 ;; esac
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          node scripts/publish-store-catalog.test.mjs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gavin-k/shhield-ai
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - name: Pin source to reviewed main
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 24.10.0
+      - name: Check catalog with the app rules
+        working-directory: source/ui/desktop
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/store-catalog-check.mjs
+      - name: Read the app public key
+        id: app
+        working-directory: source/ui/desktop
+        run: |
+          key="$(grep -A1 'PRODUCTION_PUBLIC_KEY_HEX =' src/utils/storeCatalogFeed.ts | grep -oE "'[0-9a-f]{64}'" | tr -d "'")"
+          [[ "$key" =~ ^[0-9a-f]{64}$ ]]
+          echo "public_key=$key" >> "$GITHUB_OUTPUT"
+      - name: Sign catalog
+        working-directory: source/ui/desktop
+        # Only the signing key is exposed here; R2 credentials are given to the publish step alone.
+        env:
+          STORE_CATALOG_SIGNING_KEY: ${{ secrets.STORE_CATALOG_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/store-catalog-signing-key.pem"
+          trap 'rm -f "$key"' EXIT
+          test -n "$STORE_CATALOG_SIGNING_KEY"
+          (umask 077 && printf '%s\n' "$STORE_CATALOG_SIGNING_KEY" > "$key")
+          chmod 600 "$key"
+          signed="$RUNNER_TEMP/store-catalog"
+          mkdir "$signed"
+          cp src/components/store/catalog.json "$signed/store-catalog.json"
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/store-catalog-sign.mjs sign "$key" "$signed/store-catalog.json"
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/store-catalog-signing-key.pem"
+      - name: Publish catalog and signature, then read both back
+        env:
+          PUBLIC_KEY: ${{ steps.app.outputs.public_key }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          aws --version
+          signed="$RUNNER_TEMP/store-catalog"
+          node scripts/publish-store-catalog.mjs "$CHANNEL" "$signed/store-catalog.json" "$signed/store-catalog.json.sig" "$PUBLIC_KEY"
