@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { offeredPlatforms, sha256, verifyCandidate, websiteManifest } from './release-candidate.mjs';
 import { mirrorMode, publishMirrors } from './mirror-distribution.mjs';
 
@@ -49,7 +50,12 @@ let current = release(`tags/${tag}`);
 if (!current) {
   gh('release', 'create', tag, '--repo', repository, '--draft', '--target', candidate.workflow_sha,
     '--title', `Shhield AI ${tag}`, '--notes', `Shhield AI ${tag}`);
-  current = release(`tags/${tag}`);
+  // A new draft has no tag yet, so it is only found through the release list, which can lag the create by
+  // seconds (v1.0.28 and v1.0.41 failed here). The later `gh release upload` resolves the draft the same way.
+  for (let attempt = 0; !current && attempt < 10; attempt++) {
+    if (attempt) await delay(3000);
+    current = release(`tags/${tag}`);
+  }
 }
 assert.ok(current && !current.prerelease, 'Unexpected prerelease at final version tag');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'shhield-publish-'));

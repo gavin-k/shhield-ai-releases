@@ -126,6 +126,13 @@ try {
   let pointerWrites = 0;
   let corrupt = 'cnb';
   let loseResponse = true;
+  let stalls = { put: 0, read: 0, ack: 0 };
+  const slots = new Map();
+  // Mirrors a connection that stays open without moving bytes: only the caller's abort ends it.
+  const stalled = signal => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  const stalledBody = signal => new ReadableStream({ start(controller) {
+    signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+  } });
   const r2 = async (command, args) => {
     const key = args[args.indexOf('--key') + 1];
     if (command === 'head-object') return stored.has(key) ? { ContentLength: stored.get(key).length } : null;
@@ -154,6 +161,7 @@ try {
       if (url.pathname.endsWith('/asset-upload-url')) {
         const data = JSON.parse(options.body);
         assert.equal(data.overwrite, false);
+        slots.set(data.asset_name, (slots.get(data.asset_name) ?? 0) + 1);
         return Response.json({ upload_url: `${policy.redirectOrigins[0]}/upload/${data.asset_name}`,
           verify_url: `https://api.cnb.cool/${policy.repository}/-/releases/release-id/verify` });
       }
@@ -162,9 +170,11 @@ try {
     }
     assert.ok(!options.headers?.Authorization, 'publishing tokens must not reach package hosts');
     if (options.method === 'PUT') {
+      if (stalls.put > 0) { stalls.put--; return stalled(options.signal); }
       const bytes = [];
       for await (const chunk of options.body) bytes.push(chunk);
       attachments.set(url.pathname.split('/').at(-1), Buffer.concat(bytes));
+      if (stalls.ack > 0) { stalls.ack--; return stalled(options.signal); }
       return new Response(null);
     }
     if (url.origin === 'https://download.shhield.ai' && url.pathname === '/staging/update.json') {
@@ -175,9 +185,10 @@ try {
     const name = url.pathname.split('/').at(-1);
     if (url.origin === 'https://cnb.cool') return new Response(null, { status: 302, headers: { Location: `${policy.redirectOrigins[0]}/download/${name}` } });
     assert.equal(url.origin, policy.redirectOrigins[0]);
+    if (stalls.read > 0) { stalls.read--; return new Response(stalledBody(options.signal)); }
     return new Response(corrupt === 'cnb' ? 'corrupt' : attachments.get(name));
   };
-  const publish = env => publishMirrors(directory, frozen, undefined, { env: env ?? publishingEnv, request, r2 });
+  const publish = env => publishMirrors(directory, frozen, undefined, { env: env ?? publishingEnv, request, r2, stallMs: 50 });
   const publicFeed = await fs.readFile(path.join(directory, 'update.json'));
   const probeRequest = (input, options) => input === 'https://download.shhield.ai/staging/update.json'
     ? Promise.resolve(new Response(publicFeed)) : request(input, options);
@@ -214,7 +225,15 @@ try {
   assert.equal(pointerWrites, 0, 'an unavailable global copy must not announce a release');
   assert.ok(![...stored.keys()].some(key => key.startsWith('_published/')), 'failed publication must not enter retention history');
   corrupt = '';
+  stalls = { put: Infinity, read: 0, ack: 0 };
+  await assert.rejects(publish(), /Transfer stalled/);
+  assert.equal(pointerWrites, 0, 'a mirror that never accepts the upload must not announce a release');
+  // One file meets both faults in turn: a silent upload, then stored bytes whose acknowledgement never arrives.
+  stalls = { put: 1, read: 1, ack: 1 };
+  slots.clear();
   await publish();
+  assert.deepEqual(stalls, { put: 0, read: 0, ack: 0 }, 'stalled uploads and readbacks are retried instead of failing the publication');
+  assert.deepEqual([...slots.values()].filter(count => count > 1), [2], 'an asset CNB already lists must not get another upload slot');
   assert.equal(pointerWrites, 1, 'all sources verified before committing, including lost-response recovery');
   assert.ok(stored.has(`_published/${old.prefix}receipt.json`));
   assert.ok(stored.has(`_published/${nextPointer(frozen, digest).prefix}receipt.json`));

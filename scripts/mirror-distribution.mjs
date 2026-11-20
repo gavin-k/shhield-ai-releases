@@ -13,6 +13,38 @@ import { recordPublishedRelease } from './r2-retention.mjs';
 const execute = promisify(execFile);
 const apiOrigin = 'https://api.cnb.cool';
 const publicOrigin = 'https://download.shhield.ai';
+const transferStall = 2 * 60 * 1000;
+const transferAttempts = 3;
+
+// Cross-border links to CNB can stay open without moving bytes (v1.0.41 held one upload for the full cap),
+// so silence aborts the attempt early and the caller retries; the hard cap still bounds slow progress.
+function transferGuard(stallMs, name) {
+  const controller = new AbortController();
+  let timer;
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(Object.assign(new Error(`Transfer stalled: ${name}`), { transient: true })), stallMs);
+  };
+  touch();
+  return { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15 * 60 * 1000)]), touch, done: () => clearTimeout(timer) };
+}
+
+async function withRetries(label, task) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await task(attempt); }
+    catch (error) {
+      const transient = error.transient || error.name === 'TimeoutError' || (error instanceof TypeError && /^(fetch failed|terminated)$/.test(error.message));
+      if (!transient) throw error;
+      // Only the message: request URLs carry signed upload credentials and workflow logs are public.
+      console.log(`${label}: attempt ${attempt}/${transferAttempts} failed (${error.message})`);
+      if (attempt >= transferAttempts) throw error;
+    }
+  }
+}
+
+async function* fileChunks(file, touch) {
+  for await (const chunk of createReadStream(file)) { touch(); yield chunk; }
+}
 
 export function mirrorMode(env = process.env) {
   assert.ok(!env.UPDATE_DISTRIBUTION_MODE || ['legacy', 'mirrors'].includes(env.UPDATE_DISTRIBUTION_MODE), 'Unknown update distribution mode');
@@ -46,32 +78,38 @@ function configuration(env) {
     uploadOrigins: origins(env.CNB_UPLOAD_ORIGINS, 'CNB upload origins') };
 }
 
-async function anonymousFile(url, file, allowedOrigins, request = fetch) {
-  let next = new URL(url);
-  const signal = AbortSignal.timeout(15 * 60 * 1000);
-  for (let count = 0; count <= 5; count++) {
-    const response = await request(next.href, { redirect: 'manual', credentials: 'omit', cache: 'no-store', signal });
-    if (response.status === 200) {
-      assert.ok(response.body, `Empty mirror file: ${file.name}`);
-      const hash = createHash('sha256');
-      let size = 0;
-      for await (const chunk of response.body) {
-        size += chunk.length;
-        if (size > file.size) { await response.body.cancel().catch(() => {}); throw new Error(`Mirror exceeds frozen size: ${file.name}`); }
-        hash.update(chunk);
+async function anonymousFile(url, file, allowedOrigins, request = fetch, stallMs = transferStall) {
+  await withRetries(`Mirror readback ${file.name}`, async () => {
+    let next = new URL(url);
+    const guard = transferGuard(stallMs, file.name);
+    try {
+      for (let count = 0; count <= 5; count++) {
+        const response = await request(next.href, { redirect: 'manual', credentials: 'omit', cache: 'no-store', signal: guard.signal });
+        guard.touch();
+        if (response.status === 200) {
+          assert.ok(response.body, `Empty mirror file: ${file.name}`);
+          const hash = createHash('sha256');
+          let size = 0;
+          for await (const chunk of response.body) {
+            guard.touch();
+            size += chunk.length;
+            if (size > file.size) { await response.body.cancel().catch(() => {}); throw new Error(`Mirror exceeds frozen size: ${file.name}`); }
+            hash.update(chunk);
+          }
+          assert.equal(size, file.size, `Mirror size mismatch: ${file.name}`);
+          assert.equal(hash.digest('hex'), file.sha256, `Mirror hash mismatch: ${file.name}`);
+          return;
+        }
+        await response.body?.cancel();
+        assert.ok([301, 302, 303, 307, 308].includes(response.status), `Mirror HTTP ${response.status}: ${file.name}`);
+        const location = response.headers.get('location');
+        assert.ok(location, 'Missing mirror redirect');
+        next = new URL(location, next);
+        assert.ok(allowedOrigins.includes(next.origin) && next.protocol === 'https:' && !next.port && !next.username && !next.password && !next.hash, 'Untrusted mirror redirect');
       }
-      assert.equal(size, file.size, `Mirror size mismatch: ${file.name}`);
-      assert.equal(hash.digest('hex'), file.sha256, `Mirror hash mismatch: ${file.name}`);
-      return;
-    }
-    await response.body?.cancel();
-    assert.ok([301, 302, 303, 307, 308].includes(response.status), `Mirror HTTP ${response.status}: ${file.name}`);
-    const location = response.headers.get('location');
-    assert.ok(location, 'Missing mirror redirect');
-    next = new URL(location, next);
-    assert.ok(allowedOrigins.includes(next.origin) && next.protocol === 'https:' && !next.port && !next.username && !next.password && !next.hash, 'Untrusted mirror redirect');
-  }
-  throw new Error('Too many mirror redirects');
+      throw new Error('Too many mirror redirects');
+    } finally { guard.done(); }
+  });
 }
 
 export function r2Client(env) {
@@ -124,25 +162,35 @@ async function ensureCnbRelease(config, env, candidate, request) {
 
 async function uploadCnb(config, env, release, file, request) {
   if (release.assets.some(asset => asset.name === file.name)) return; // Anonymous readback below verifies existing bytes too.
-  const target = await cnbRequest(config, env, 'POST', `/${encodeURIComponent(release.id)}/asset-upload-url`, {
-    asset_name: file.name, size: file.size, overwrite: false,
-  }, false, request);
-  const upload = new URL(target.upload_url);
-  const verify = new URL(decodeURIComponent(target.verify_url));
-  assert.ok(config.uploadOrigins.includes(upload.origin) && upload.protocol === 'https:' && !upload.username && !upload.password && !upload.hash, 'Untrusted CNB upload URL');
-  assert.ok(verify.origin === apiOrigin && verify.pathname.startsWith(`/${config.repository}/-/releases/`) && !verify.username && !verify.password && !verify.hash, 'Untrusted CNB verification URL');
-  const response = await request(upload.href, {
-    method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(15 * 60 * 1000),
-    headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size) }, body: createReadStream(file.path), duplex: 'half',
+  await withRetries(`CNB upload ${file.name}`, async attempt => {
+    if (attempt > 1) {
+      // A lost response can hide a confirmed upload; never ask for a second slot for an asset CNB already lists.
+      const current = await cnbRequest(config, env, 'GET', `/tags/${encodeURIComponent(release.tag_name)}`, undefined, false, request);
+      if (current?.assets?.some(asset => asset.name === file.name)) return;
+    }
+    const target = await cnbRequest(config, env, 'POST', `/${encodeURIComponent(release.id)}/asset-upload-url`, {
+      asset_name: file.name, size: file.size, overwrite: false,
+    }, false, request);
+    const upload = new URL(target.upload_url);
+    const verify = new URL(decodeURIComponent(target.verify_url));
+    assert.ok(config.uploadOrigins.includes(upload.origin) && upload.protocol === 'https:' && !upload.username && !upload.password && !upload.hash, 'Untrusted CNB upload URL');
+    assert.ok(verify.origin === apiOrigin && verify.pathname.startsWith(`/${config.repository}/-/releases/`) && !verify.username && !verify.password && !verify.hash, 'Untrusted CNB verification URL');
+    const guard = transferGuard(config.stallMs ?? transferStall, file.name);
+    try {
+      const response = await request(upload.href, {
+        method: 'PUT', redirect: 'error', signal: guard.signal,
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size) }, body: fileChunks(file.path, guard.touch), duplex: 'half',
+      });
+      await response.body?.cancel();
+      assert.ok(response.ok, `CNB upload failed: ${file.name} HTTP ${response.status}`);
+    } finally { guard.done(); }
+    const confirmed = await request(verify.href, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${env.CNB_TOKEN}`, Accept: 'application/vnd.cnb.api+json' } });
+    await confirmed.body?.cancel();
+    assert.ok(confirmed.ok, `CNB upload confirmation failed: ${file.name}`);
   });
-  await response.body?.cancel();
-  assert.ok(response.ok, `CNB upload failed: ${file.name} HTTP ${response.status}`);
-  const confirmed = await request(verify.href, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${env.CNB_TOKEN}`, Accept: 'application/vnd.cnb.api+json' } });
-  await confirmed.body?.cancel();
-  assert.ok(confirmed.ok, `CNB upload confirmation failed: ${file.name}`);
 }
 
-export async function probeCnbOrigins(directory, candidate, { env = process.env, request = fetch } = {}) {
+export async function probeCnbOrigins(directory, candidate, { env = process.env, request = fetch, stallMs = transferStall } = {}) {
   assert.ok(env.CNB_TOKEN, 'Missing CNB token');
   assert.match(env.CNB_RELEASE_REPOSITORY || '', /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)+$/, 'Missing CNB release repository');
   assert.equal(await sha256(path.join(directory, 'candidate.json')), env.CANDIDATE_SHA256, 'Frozen candidate digest required');
@@ -153,7 +201,7 @@ export async function probeCnbOrigins(directory, candidate, { env = process.env,
   const file = { ...metadata, path: path.join(directory, metadata.name) };
   await anonymousFile(`${publicOrigin}/${candidate.channel === 'production' ? 'stable' : 'staging'}/update.json`, file,
     candidate.channel === 'production' ? ['https://github.com', 'https://release-assets.githubusercontent.com'] : [], request);
-  const config = { repository: env.CNB_RELEASE_REPOSITORY, uploadOrigins: [] };
+  const config = { repository: env.CNB_RELEASE_REPOSITORY, uploadOrigins: [], stallMs };
   const release = await ensureCnbRelease(config, env, candidate, request);
   if (env.CNB_UPLOAD_ORIGINS) config.uploadOrigins = origins(env.CNB_UPLOAD_ORIGINS, 'CNB upload origins');
   else {
@@ -220,8 +268,8 @@ export async function commitPointer({ previous, next, read, put }) {
   assert.deepEqual((await read())?.value, next, 'Release pointer changed after commit; inspect before retrying');
 }
 
-export async function publishMirrors(directory, candidate, websiteFile, { bootstrap = false, env = process.env, request = fetch, r2 = r2Client(env) } = {}) {
-  const config = configuration(env);
+export async function publishMirrors(directory, candidate, websiteFile, { bootstrap = false, env = process.env, request = fetch, r2 = r2Client(env), stallMs = transferStall } = {}) {
+  const config = { ...configuration(env), stallMs };
   const digest = await sha256(path.join(directory, 'candidate.json'));
   assert.equal(digest, env.CANDIDATE_SHA256, 'Frozen candidate digest required');
   assert.deepEqual(await verifyCandidate(directory), candidate, 'Candidate changed before mirror publication');
@@ -272,6 +320,7 @@ export async function publishMirrors(directory, candidate, websiteFile, { bootst
     for (const file of files) {
       // shortcut: single PutObject is capped at 5 GiB; add conditional multipart uploads if packages grow beyond it.
       assert.ok(file.size < 5 * 1024 ** 3, 'Mirror file exceeds single-upload limit');
+      const started = Date.now();
       const objectKey = next.prefix + file.name;
       const exists = await r2('head-object', ['--key', objectKey], true);
       if (!exists) {
@@ -281,8 +330,10 @@ export async function publishMirrors(directory, candidate, websiteFile, { bootst
         } catch (error) { if (!error.precondition) throw error; }
       }
       await uploadCnb(config, env, release, file, request);
-      await anonymousFile(`${bootstrap ? config.probe : publicOrigin}/${objectKey}`, file, [], request);
-      await anonymousFile(`https://cnb.cool/${config.repository}/-/releases/download/${mirrorTag(candidate)}/${file.name}`, file, config.downloadOrigins, request);
+      await anonymousFile(`${bootstrap ? config.probe : publicOrigin}/${objectKey}`, file, [], request, stallMs);
+      await anonymousFile(`https://cnb.cool/${config.repository}/-/releases/download/${mirrorTag(candidate)}/${file.name}`, file, config.downloadOrigins, request, stallMs);
+      // Shows which file a stuck publication reached; a hung step used to leave no trace until the job was killed.
+      console.log(`Mirrored ${file.name} (${file.size} bytes) in ${Math.round((Date.now() - started) / 1000)}s`);
     }
     assert.equal(await sha256(path.join(directory, 'candidate.json')), digest, 'Candidate metadata changed during publication');
     if (bootstrap) await anonymousFile(`${publicOrigin}/${next.channel}/update.json`, candidate.files.find(file => file.name === 'update.json'),
