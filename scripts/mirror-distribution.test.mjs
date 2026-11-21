@@ -153,8 +153,10 @@ try {
     if (key === pointerKey && loseResponse) { loseResponse = false; throw new Error('response lost'); }
     return {};
   };
+  let cnbRequests = 0;
   const request = async (input, options = {}) => {
     const url = new URL(input);
+    if (['https://api.cnb.cool', 'https://cnb.cool', policy.redirectOrigins[0]].includes(url.origin)) cnbRequests++;
     if (url.origin === 'https://api.cnb.cool') {
       assert.equal(options.headers.Authorization, 'Bearer synthetic');
       if (url.pathname.includes('/tags/')) return Response.json({ id: 'release-id', tag_name: mirrorTag(frozen), assets: [...attachments.keys()].map(name => ({ name })) });
@@ -181,11 +183,14 @@ try {
       const active = JSON.parse(stored.get(pointerKey));
       return Response.json({ schema_version: 1, channel: active.channel, version: active.version, source_sha: active.source_sha }, { headers: { 'X-Shhield-Distribution': 'r2', 'Cache-Control': 'no-store' } });
     }
-    if (url.origin === publishingEnv.GLOBAL_MIRROR_PROBE_ORIGIN || url.origin === 'https://download.shhield.ai') return corrupt === 'global' ? new Response(null, { status: 503 }) : new Response(stored.get(url.pathname.slice(1)));
+    if (url.origin === publishingEnv.GLOBAL_MIRROR_PROBE_ORIGIN || url.origin === 'https://download.shhield.ai') {
+      if (corrupt === 'global') return new Response(null, { status: 503 });
+      if (stalls.read > 0) { stalls.read--; return new Response(stalledBody(options.signal)); }
+      return new Response(stored.get(url.pathname.slice(1)));
+    }
     const name = url.pathname.split('/').at(-1);
     if (url.origin === 'https://cnb.cool') return new Response(null, { status: 302, headers: { Location: `${policy.redirectOrigins[0]}/download/${name}` } });
     assert.equal(url.origin, policy.redirectOrigins[0]);
-    if (stalls.read > 0) { stalls.read--; return new Response(stalledBody(options.signal)); }
     return new Response(corrupt === 'cnb' ? 'corrupt' : attachments.get(name));
   };
   const publish = env => publishMirrors(directory, frozen, undefined, { env: env ?? publishingEnv, request, r2, stallMs: 50 });
@@ -203,6 +208,17 @@ try {
     new URL(input).origin === 'https://cnb.cool'
       ? Promise.resolve(new Response(null, { status: 302, headers: { Location: 'http://untrusted.invalid/file' } }))
       : probeRequest(input, options) }), /Invalid discovered CNB redirect/);
+  const probe = () => probeCnbOrigins(directory, frozen, { env: publishingEnv, request: probeRequest, stallMs: 50 });
+  attachments.clear();
+  stalls = { put: Infinity, ack: 0 };
+  await assert.rejects(probe(), /Transfer stalled/);
+  // One upload meets both faults in turn: a silent upload, then stored bytes whose acknowledgement never arrives.
+  attachments.clear();
+  slots.clear();
+  stalls = { put: 1, ack: 1 };
+  await probe();
+  assert.deepEqual(stalls, { put: 0, ack: 0 }, 'stalled uploads are retried instead of failing');
+  assert.deepEqual([...slots.values()], [2], 'an asset CNB already lists must not get another upload slot');
   assert.equal(pointerWrites, 0, 'origin discovery must not authorize installation');
   corrupt = 'cnb';
   for (const [override, expected] of [
@@ -218,22 +234,19 @@ try {
     assert.match(result.stderr, expected);
   }
   await assert.rejects(publishMirrors(directory, frozen, undefined, { bootstrap: true, env: publishingEnv, request, r2 }), /Bootstrap cannot replace/);
-  await assert.rejects(publish(), /Mirror (size|hash)|exceeds frozen size/);
-  assert.equal(pointerWrites, 0, 'a corrupt mainland copy must not announce a release');
   corrupt = 'global';
   await assert.rejects(publish(), /Mirror HTTP 503/);
   assert.equal(pointerWrites, 0, 'an unavailable global copy must not announce a release');
   assert.ok(![...stored.keys()].some(key => key.startsWith('_published/')), 'failed publication must not enter retention history');
   corrupt = '';
-  stalls = { put: Infinity, read: 0, ack: 0 };
+  stalls = { read: Infinity };
   await assert.rejects(publish(), /Transfer stalled/);
-  assert.equal(pointerWrites, 0, 'a mirror that never accepts the upload must not announce a release');
-  // One file meets both faults in turn: a silent upload, then stored bytes whose acknowledgement never arrives.
-  stalls = { put: 1, read: 1, ack: 1 };
-  slots.clear();
+  assert.equal(pointerWrites, 0, 'a global copy that never reads back must not announce a release');
+  stalls = { read: 1 };
+  cnbRequests = 0;
   await publish();
-  assert.deepEqual(stalls, { put: 0, read: 0, ack: 0 }, 'stalled uploads and readbacks are retried instead of failing the publication');
-  assert.deepEqual([...slots.values()].filter(count => count > 1), [2], 'an asset CNB already lists must not get another upload slot');
+  assert.deepEqual(stalls, { read: 0 }, 'a stalled readback is retried instead of failing the publication');
+  assert.equal(cnbRequests, 0, 'publication must not push to or read from CNB while CNB pulls on its own');
   assert.equal(pointerWrites, 1, 'all sources verified before committing, including lost-response recovery');
   assert.ok(stored.has(`_published/${old.prefix}receipt.json`));
   assert.ok(stored.has(`_published/${nextPointer(frozen, digest).prefix}receipt.json`));

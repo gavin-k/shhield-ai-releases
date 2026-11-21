@@ -54,6 +54,7 @@ Worker 直接从 R2 binding 读取这两个对象，返回同域 200、`Cache-Co
 - CNB 使用独立公开发布仓库，附件仅为自建且已获准分发的原文件及公开清单。stable tag 为 `v<version>`，staging 为 `staging-v<version>-<source_sha>-<run_id>-<run_attempt>`。不更新 CNB latest，不复制私有源码、凭据或内部验收记录。
 - 发布端冻结源码仓库的 `ui/desktop/src/update-mirror-policy.json` 为候选的 `mirror-policy.json`。普通镜像发布要求它与实际发布配置完全一致；只有当前旧版本的 bootstrap 允许缺少该文件。客户端不会接受用户自填下载 URL。
 - 所有候选文件在 R2 和 CNB 都匿名读回并通过长度/SHA-256 校验后，才以 ETag 条件写入推进渠道指针。GitHub 保留原归档及 stable 下载后备，展示 latest 不是客户端提交点。
+- 暂停（2026-11-21）：v1.0.41 两次 publish 都卡在从 GitHub runner 往 `asset.cnb.cool` 上传首个文件（15 分钟无字节流动）。`publishMirrors` 里推送 CNB 和 CNB 读回的调用已注释，正式、staging 与 bootstrap 发布只写 R2 并在 R2 读回校验后推进指针；`probe` 模式不受影响。改由 CNB 侧流水线按 `download.shhield.ai` 的 `update.json` 自行拉取并校验 SHA-256，尚未部署。在此之前，新版本在 CNB 上没有文件：自动选源的客户端只少一个后备，显式选择 CNB 的客户端会更新失败。
 
 ## 开通前需要核实
 

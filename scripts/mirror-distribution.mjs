@@ -316,7 +316,11 @@ export async function publishMirrors(directory, candidate, websiteFile, { bootst
       assert.ok(websiteFile, 'Frozen website manifest required');
       files.push({ name: 'latest.json', path: websiteFile, size: (await fs.stat(websiteFile)).size, sha256: await sha256(websiteFile) });
     }
-    const release = await ensureCnbRelease(config, env, candidate, request);
+    // CNB is paused on this path: pushing packages from a GitHub runner across the border hung both v1.0.41 publish
+    // attempts on the first upload. CNB is to pull from the official origin on its own schedule instead; clients
+    // already fall back to it only after R2 and verify its bytes against the R2 feed. To push from here again,
+    // restore this call and the two marked in the loop below.
+    // const release = await ensureCnbRelease(config, env, candidate, request);
     for (const file of files) {
       // shortcut: single PutObject is capped at 5 GiB; add conditional multipart uploads if packages grow beyond it.
       assert.ok(file.size < 5 * 1024 ** 3, 'Mirror file exceeds single-upload limit');
@@ -329,9 +333,9 @@ export async function publishMirrors(directory, candidate, websiteFile, { bootst
             '--content-type', file.name.endsWith('.json') ? 'application/json' : 'application/octet-stream', '--metadata', `sha256=${file.sha256}`]);
         } catch (error) { if (!error.precondition) throw error; }
       }
-      await uploadCnb(config, env, release, file, request);
+      // await uploadCnb(config, env, release, file, request); // Paused CNB push, see above.
       await anonymousFile(`${bootstrap ? config.probe : publicOrigin}/${objectKey}`, file, [], request, stallMs);
-      await anonymousFile(`https://cnb.cool/${config.repository}/-/releases/download/${mirrorTag(candidate)}/${file.name}`, file, config.downloadOrigins, request, stallMs);
+      // await anonymousFile(`https://cnb.cool/${config.repository}/-/releases/download/${mirrorTag(candidate)}/${file.name}`, file, config.downloadOrigins, request, stallMs); // Paused CNB push, see above.
       // Shows which file a stuck publication reached; a hung step used to leave no trace until the job was killed.
       console.log(`Mirrored ${file.name} (${file.size} bytes) in ${Math.round((Date.now() - started) / 1000)}s`);
     }

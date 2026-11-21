@@ -236,6 +236,8 @@ jobs:
     needs: [validate, production-candidate]
     if: ${{ !cancelled() && needs.production-candidate.result == 'success' }}
     runs-on: ubuntu-latest
+    # A successful publish takes about 15 minutes (v1.0.40); the default 6 hours only delays a hung transfer's failure.
+    timeout-minutes: 60
     environment:
       name: release
       url: ${{ needs.production-candidate.outputs.artifact_url }}
